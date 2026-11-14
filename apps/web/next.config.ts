@@ -8,11 +8,24 @@ const repoRoot = path.resolve(__dirname, '../..');
 
 const nextConfig: NextConfig = {
   // Workspace packages ship TypeScript source; Next compiles them.
-  transpilePackages: ['@aiv/core', '@aiv/connectors', '@aiv/analysis', '@aiv/db', '@aiv/pipeline'],
+  transpilePackages: [
+    '@aiv/core',
+    '@aiv/connectors',
+    '@aiv/analysis',
+    '@aiv/db',
+    '@aiv/pipeline',
+    '@aiv/policy',
+    '@aiv/content-scan',
+  ],
   // Self-contained server bundle for the Docker image.
   output: 'standalone',
   outputFileTracingRoot: repoRoot,
-  serverExternalPackages: ['@prisma/client', 'bcryptjs'],
+  // Native/worker-heavy parsers stay as node_modules requires (not bundled).
+  serverExternalPackages: ['@prisma/client', 'bcryptjs', 'unpdf', '@kenjiuno/msgreader'],
+  experimental: {
+    // Policy documents are uploaded through a server action.
+    serverActions: { bodySizeLimit: '20mb' },
+  },
   poweredByHeader: false,
   // Linting runs once for the whole monorepo via `npm run lint` (root eslint.config.mjs).
   eslint: { ignoreDuringBuilds: true },

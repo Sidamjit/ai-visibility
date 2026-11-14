@@ -25,7 +25,8 @@ describe('role access', () => {
       '/settings',
       '/settings/vendor-access',
       '/settings/audit',
-      '/api/export/findings',
+      '/api/findings/export',
+      '/api/content/export',
       '/manager',
     ])
       expect(canAccess('VENDOR_SUPPORT', p, 'read-only')).toBe(false);

@@ -47,4 +47,50 @@ export const CATEGORY_LABEL: Record<string, string> = {
   capability: 'Capability',
   spend: 'Spend',
   value: 'Value',
+  policy: 'Content & policy',
 };
+
+export const BREACH_LABEL: Record<string, string> = {
+  'anyone-link': 'Anyone link',
+  'organization-link': 'Org-wide link',
+  'external-guest': 'Guest access',
+  'public-site': 'Public site',
+  'audience-exceeded': 'Audience too wide',
+  'label-missing': 'Label missing',
+  'label-insufficient': 'Label too low',
+  'location-blocked': 'Blocked location',
+  'location-not-allowed': 'Not an approved location',
+  'onedrive-not-allowed': 'In OneDrive',
+  'department-not-allowed': 'Wrong department',
+  'retention-exceeded': 'Past retention',
+};
+
+export const bytes = (n: number) => {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let v = n;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${num(Math.round(v * 10) / 10)} ${units[i]}`;
+};
+
+/** Plain-language "who can open this file" from a classified file's exposure. */
+export function accessSummary(e: {
+  anyoneLinks: number;
+  organizationLinks: number;
+  externalPrincipals: number;
+  publicSite: boolean;
+  audienceSize: number | null;
+}): string {
+  const parts: string[] = [];
+  if (e.anyoneLinks)
+    parts.push(`anyone with the link (${e.anyoneLinks} link${e.anyoneLinks > 1 ? 's' : ''})`);
+  if (e.organizationLinks) parts.push('everyone in the organisation (org-wide link)');
+  if (e.publicSite) parts.push('everyone in the organisation (public site)');
+  if (e.externalPrincipals)
+    parts.push(`${e.externalPrincipals} external guest${e.externalPrincipals > 1 ? 's' : ''}`);
+  if (e.audienceSize !== null) parts.push(`~${e.audienceSize} people with access`);
+  return parts.length ? parts.join('; ') : 'site members only';
+}

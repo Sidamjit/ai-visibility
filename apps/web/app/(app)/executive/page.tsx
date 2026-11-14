@@ -4,7 +4,7 @@
  */
 import { requireRole } from '@/lib/auth';
 import { getFindings, getLatestRun, getTrend } from '@/lib/data';
-import { date, money, pct } from '@/lib/format';
+import { BREACH_LABEL, date, money, num, pct } from '@/lib/format';
 import { SimpleBarChart, TrendChart } from '@/components/charts';
 import {
   ButtonLink,
@@ -118,6 +118,67 @@ export default async function ExecutivePage() {
         />
       </div>
 
+      {run.content ? (
+        <Card
+          title="Sensitive content vs your classification policy"
+          action={
+            user.role === 'IT' ? (
+              <ButtonLink href="/it/breaches">Breach detail</ButtonLink>
+            ) : undefined
+          }
+        >
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+            <div>
+              <div className="text-4xl font-semibold text-red-600">
+                {run.content.breachingFiles}
+                <span className="ml-1 text-base font-normal text-slate-500">
+                  of {run.content.classifiedFiles} classified files
+                </span>
+              </div>
+              <p className="mt-1 text-sm text-slate-600">
+                are stored or shared in a way your policy ({run.content.policyName}) does not allow.
+                {num(run.content.filesScanned)} files were read inside your environment; no content
+                was stored.
+              </p>
+            </div>
+            <div className="space-y-1.5 text-sm">
+              {[...run.content.levels]
+                .filter((l) => l.files > 0)
+                .sort((a, b) => b.rank - a.rank)
+                .map((l) => (
+                  <div key={l.levelId} className="flex items-center justify-between gap-2">
+                    <span>
+                      <span
+                        className="mr-2 inline-block h-2.5 w-2.5 rounded-full"
+                        style={{ background: l.color ?? '#475569' }}
+                      />
+                      {l.name}
+                    </span>
+                    <span className="text-slate-600">
+                      {l.files} files ·{' '}
+                      <strong className={l.breachingFiles ? 'text-red-700' : 'text-emerald-700'}>
+                        {l.breachingFiles} breaching
+                      </strong>
+                    </span>
+                  </div>
+                ))}
+            </div>
+            <div className="space-y-1.5 text-sm">
+              {Object.entries(run.content.breachesByType)
+                .filter(([, n]) => n > 0)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(([t, n]) => (
+                  <div key={t} className="flex justify-between">
+                    <span>{BREACH_LABEL[t] ?? t}</span>
+                    <span className="font-semibold">{n} files</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Top 5 risks">
           <ol className="space-y-3">
@@ -163,8 +224,9 @@ export default async function ExecutivePage() {
             bars={[{ key: 'value', label: 'Component (0-100)', color: '#dc2626' }]}
           />
           <p className="text-xs text-slate-500">
-            Weights: exposure 40%, labelling 20%, site readiness 20%, severity 10%, licence waste
-            10%.
+            {'policy' in run.scores.riskComponents
+              ? 'Weights: exposure 30%, policy breaches 20%, labelling 15%, site readiness 15%, severity 10%, licence waste 10%.'
+              : 'Weights: exposure 40%, labelling 20%, site readiness 20%, severity 10%, licence waste 10%.'}
           </p>
         </Card>
         <Card title="Spend vs estimated value (monthly)">

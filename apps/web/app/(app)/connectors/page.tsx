@@ -21,7 +21,7 @@ export default async function ConnectorsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Connectors"
-        subtitle="Read-only, metadata-only connections to your AI and content platforms. Secrets are held in environment variables, never in the database."
+        subtitle="Read-only connections to your AI and content platforms, running inside your environment. File content is read in memory for classification (when content scanning is on) and never stored. Secrets are held in environment variables, never in the database."
       />
       <Card title="Configured">
         {instances.length === 0 ? (

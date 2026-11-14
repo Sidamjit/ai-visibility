@@ -8,7 +8,8 @@ import { ASSUMPTION_DOCS, BRAND, type Assumptions } from '@aiv/core';
 import { RULES } from '@aiv/analysis';
 import { requireRole } from '@/lib/auth';
 import { getFindings, getLatestRun, getTenant, getTrend } from '@/lib/data';
-import { CATEGORY_LABEL, date, money, pct } from '@/lib/format';
+import { BREACH_LABEL, CATEGORY_LABEL, date, money, num, pct } from '@/lib/format';
+import { classifierNames } from '@/lib/classifiers';
 import { PrintButton } from '@/components/PrintButton';
 import { SeverityBadge } from '@/components/ui';
 
@@ -37,6 +38,8 @@ export default async function ReportPage() {
     {},
   );
   const first = trend[0];
+  const c = run.content;
+  const names = classifierNames();
 
   return (
     <main className="mx-auto max-w-4xl bg-white p-10 text-slate-900 print:p-0">
@@ -91,6 +94,14 @@ export default async function ReportPage() {
           {m.estimatedHoursSavedPerMonth.toLocaleString()} hours, conservative assumptions in
           Appendix A).
         </li>
+        {c ? (
+          <li>
+            {num(c.filesScanned)} files were read inside your environment and compared with{' '}
+            <i>{c.policyName}</i>: <b>{c.classifiedFiles}</b> contain information classified above
+            the default level and <b>{c.breachingFiles}</b> of them are stored, labelled or shared
+            in breach of the policy.
+          </li>
+        ) : null}
         <li>
           {findings.length} findings:{' '}
           {['critical', 'high', 'medium', 'low', 'info']
@@ -131,8 +142,69 @@ export default async function ReportPage() {
         ))}
       </ol>
 
+      {c ? (
+        <section className="break-before">
+          <H2>4. Sensitive content vs classification policy</H2>
+          <p className="text-sm text-slate-700">
+            Policy: <b>{c.policyName}</b> (v{c.policyVersion}). {num(c.filesScanned)} files scanned,{' '}
+            {c.filesSkipped} skipped (size/type limits), {c.filesFailed} unreadable (e.g.
+            encrypted). Classification is derived from what the files contain (validated detectors
+            such as IRD-number checksums and Luhn-valid card numbers), not from their names.
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-6">
+            <table className="min-w-full text-xs">
+              <thead>
+                <tr className="border-b text-left">
+                  <th className="py-1">Classification</th>
+                  <th className="text-right">Files</th>
+                  <th className="text-right">Breaching</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...c.levels]
+                  .sort((a, b) => b.rank - a.rank)
+                  .map((l) => (
+                    <tr key={l.levelId} className="border-b border-slate-100">
+                      <td className="py-1">{l.name}</td>
+                      <td className="text-right">{l.files}</td>
+                      <td className="text-right font-semibold">{l.breachingFiles}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+            <table className="min-w-full text-xs">
+              <thead>
+                <tr className="border-b text-left">
+                  <th className="py-1">Breach</th>
+                  <th className="text-right">Files</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(c.breachesByType)
+                  .filter(([, n]) => n > 0)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([t, n]) => (
+                    <tr key={t} className="border-b border-slate-100">
+                      <td className="py-1">{BREACH_LABEL[t] ?? t}</td>
+                      <td className="text-right">{n}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-xs text-slate-600">
+            Detected:{' '}
+            {c.classifiers
+              .map((x) => `${names[x.classifierId] ?? x.classifierId} (${x.files} files)`)
+              .join(', ')}
+            . File-level detail (location, who has access, detectors, breaches) is in the ICT view
+            and the content-breaches CSV export.
+          </p>
+        </section>
+      ) : null}
+
       <section className="break-before">
-        <H2>4. Copilot readiness by site</H2>
+        <H2>{c ? 5 : 4}. Copilot readiness by site</H2>
         <table className="min-w-full text-xs">
           <thead>
             <tr className="border-b text-left">
@@ -164,7 +236,7 @@ export default async function ReportPage() {
       </section>
 
       <section>
-        <H2>5. Adoption by department</H2>
+        <H2>{c ? 6 : 5}. Adoption by department</H2>
         <table className="min-w-full text-xs">
           <thead>
             <tr className="border-b text-left">
@@ -194,7 +266,7 @@ export default async function ReportPage() {
       </section>
 
       <section className="break-before">
-        <H2>6. All findings and recommended fixes</H2>
+        <H2>{c ? 7 : 6}. All findings and recommended fixes</H2>
         <div className="space-y-4">
           {findings.map((f) => (
             <div
@@ -239,11 +311,13 @@ export default async function ReportPage() {
         <H2>Appendix B. Method and data handling</H2>
         <p className="text-sm text-slate-700">
           Data is collected read-only through Microsoft Graph with application permissions approved
-          by your administrator. Only metadata is collected (names, dates, sharing settings, labels,
-          usage dates); file contents, emails, chats and Copilot prompts/responses are never read or
-          stored. Sensitive content is identified from labels and name patterns (e.g.
-          &quot;payroll&quot;, &quot;passport&quot;), so treat name-based signals as triage. Value
-          figures are estimates based on the assumptions above.
+          by your administrator, and the application runs inside your own environment. Metadata
+          (names, dates, sharing settings, labels, usage dates) is stored for analysis.{' '}
+          {c
+            ? 'File content was downloaded into memory, classified with validated detectors and discarded; only detector names, counts, keyed hashes and (if enabled) short redacted snippets are stored — never the content itself. '
+            : 'File content scanning was not enabled for this run, so sensitive content is identified from labels and name patterns (e.g. "payroll", "passport") and should be treated as triage. '}
+          Mailboxes, chats and Copilot prompts/responses are never read. Value figures are estimates
+          based on the assumptions above.
         </p>
         <H2>Appendix C. Rules applied</H2>
         <table className="min-w-full text-xs">

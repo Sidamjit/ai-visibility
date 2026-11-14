@@ -7,11 +7,11 @@ import { revalidatePath } from 'next/cache';
 import { AssumptionsSchema, DEFAULT_ASSUMPTIONS, type Assumptions } from '@aiv/core';
 import { prisma } from '@aiv/db';
 import { runConnectorSync, runTenantAnalysis } from '@aiv/pipeline';
-import { requireRole } from '@/lib/auth';
+import { requireRole, WRITE } from '@/lib/auth';
 
 /** Toggle one remediation checklist step. */
 export async function toggleRemediationStep(formData: FormData): Promise<void> {
-  const user = await requireRole(['IT']);
+  const user = await requireRole(['IT'], WRITE);
   const findingKey = String(formData.get('findingKey'));
   const stepIndex = Number(formData.get('stepIndex'));
   const done = formData.get('done') === 'true';
@@ -32,7 +32,7 @@ export async function toggleRemediationStep(formData: FormData): Promise<void> {
 
 /** Sync one connector instance now, then re-run the analysis. */
 export async function syncConnectorNow(formData: FormData): Promise<void> {
-  const user = await requireRole(['IT']);
+  const user = await requireRole(['IT'], WRITE);
   const id = String(formData.get('connectorInstanceId'));
   const out = await runConnectorSync(user.tenantId, id);
   // The error is stored on the connector instance and shown on the page; only analyse fresh data.
@@ -42,14 +42,14 @@ export async function syncConnectorNow(formData: FormData): Promise<void> {
 
 /** Re-run the analysis on stored data (no sync). */
 export async function rerunAnalysis(): Promise<void> {
-  const user = await requireRole(['IT', 'EXECUTIVE']);
+  const user = await requireRole(['IT', 'EXECUTIVE'], WRITE);
   await runTenantAnalysis(user.tenantId);
   revalidatePath('/', 'layout');
 }
 
 /** Save editable value assumptions and re-run the analysis so figures update. */
 export async function saveAssumptions(formData: FormData): Promise<void> {
-  const user = await requireRole(['IT', 'EXECUTIVE']);
+  const user = await requireRole(['IT', 'EXECUTIVE'], WRITE);
   const raw: Record<string, unknown> = {};
   for (const key of Object.keys(DEFAULT_ASSUMPTIONS) as Array<keyof Assumptions>) {
     const v = formData.get(key);

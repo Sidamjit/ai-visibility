@@ -8,11 +8,18 @@ import { HOME_FOR_ROLE, canAccess, isRole } from '@aiv/core';
 
 export default withAuth(
   function middleware(req) {
-    const role = req.nextauth.token?.role;
+    const token = req.nextauth.token;
+    const role = token?.role;
     if (!isRole(role)) return NextResponse.redirect(new URL('/login', req.url));
-    if (!canAccess(role, req.nextUrl.pathname))
+    // Vendor sessions end at grant expiry (revocation is enforced server-side per request).
+    if (role === 'VENDOR_SUPPORT' && (!token?.grantExpiresAt || token.grantExpiresAt < Date.now()))
+      return NextResponse.redirect(new URL('/login?error=VendorAccessEnded', req.url));
+    if (!canAccess(role, req.nextUrl.pathname, token?.vendorScope ?? null))
       return NextResponse.redirect(new URL(HOME_FOR_ROLE[role], req.url));
-    return NextResponse.next();
+    // Pages read this for role checks and the page-view audit log.
+    const headers = new Headers(req.headers);
+    headers.set('x-aiv-pathname', req.nextUrl.pathname);
+    return NextResponse.next({ request: { headers } });
   },
   { pages: { signIn: '/login' } },
 );

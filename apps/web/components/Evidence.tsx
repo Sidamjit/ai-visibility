@@ -1,6 +1,6 @@
 /**
  * Renders a finding's evidence object: arrays of objects become tables,
- * scalars become a definition list. Evidence is metadata only by design.
+ * scalars become a definition list. Evidence never contains file content (counts and redacted snippets only).
  */
 function Cell({ value }: { value: unknown }) {
   if (value === null || value === undefined || value === '')

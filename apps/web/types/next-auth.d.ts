@@ -1,5 +1,5 @@
 /** Extends NextAuth types with our tenant + role claims. */
-import type { Role } from '@aiv/core';
+import type { Role, VendorScope } from '@aiv/core';
 import 'next-auth';
 import 'next-auth/jwt';
 
@@ -12,12 +12,15 @@ declare module 'next-auth' {
       role: Role;
       tenantId: string;
       department: string | null;
+      vendorScope: VendorScope | null;
     };
   }
   interface User {
     role?: Role;
     tenantId?: string;
     department?: string | null;
+    vendorScope?: VendorScope | null;
+    grantExpiresAt?: number | null;
   }
 }
 
@@ -27,5 +30,8 @@ declare module 'next-auth/jwt' {
     role?: Role;
     tenantId?: string;
     department?: string | null;
+    vendorScope?: VendorScope | null;
+    /** Epoch ms; vendor sessions end at grant expiry even before the JWT does. */
+    grantExpiresAt?: number | null;
   }
 }

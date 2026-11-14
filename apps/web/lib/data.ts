@@ -4,6 +4,8 @@
  * another's data. Prisma JSON columns are cast back to their analysis types.
  */
 import type {
+  ClassifiedFileView,
+  ContentMetrics,
   DepartmentStat,
   OrgMetrics,
   Recommendation as RecShape,
@@ -24,6 +26,8 @@ export interface RunView {
   siteScores: SiteScore[];
   departments: DepartmentStat[];
   assumptions: Assumptions;
+  /** Content-scan / policy metrics (null when no content was scanned or no policy). */
+  content: ContentMetrics | null;
 }
 
 export interface FindingView {
@@ -67,7 +71,41 @@ export async function getLatestRun(tenantId: string): Promise<RunView | null> {
     siteScores: run.siteScores as unknown as SiteScore[],
     departments: run.departments as unknown as DepartmentStat[],
     assumptions: run.assumptions as unknown as Assumptions,
+    content: (run.content as unknown as ContentMetrics | null) ?? null,
   };
+}
+
+/** Classified files of a run (what was found where; no file content). */
+export async function getContentFiles(
+  tenantId: string,
+  runId: string,
+): Promise<ClassifiedFileView[]> {
+  const run = await prisma.analysisRun.findFirst({
+    where: { id: runId, tenantId },
+    select: { contentFiles: true },
+  });
+  return ((run?.contentFiles ?? []) as unknown as ClassifiedFileView[]).slice();
+}
+
+/** Content-policy trend: breaching files per run (simulated history included). */
+export async function getContentTrend(tenantId: string, limit = 26) {
+  const runs = await prisma.analysisRun.findMany({
+    where: { tenantId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+    select: { createdAt: true, content: true },
+  });
+  return runs
+    .reverse()
+    .filter((r) => r.content)
+    .map((r) => {
+      const c = r.content as unknown as ContentMetrics;
+      return {
+        date: r.createdAt.toISOString(),
+        breaching: c.breachingFiles,
+        classified: c.classifiedFiles,
+      };
+    });
 }
 
 /** Risk/value over time (one point per run; demo history is marked simulated). */
