@@ -9,22 +9,47 @@
  *   add-user --tenant acme --email ceo@acme.com --name "CEO" --role EXECUTIVE --password '<12+ chars>' [--department Finance]
  *   check --tenant acme               Verify connector credentials/permissions (no data pulled).
  *   sync --tenant acme                Sync + analyse one tenant.
+ *   analyse --tenant acme             Re-run analysis only (e.g. after a policy change; no re-scan).
+ *   policy-import --tenant acme --file policy.yaml   Validate + set the tenant's classification policy.
+ *   policy-export --tenant acme [--file out.yaml]    Print/save the active policy (sample if none).
+ *   policy-sample [--file out.yaml]                  Print/save the NZ sample policy.
+ *   policy-draft --tenant acme --file "Info Mgmt Policy.docx"
+ *                                     Draft rules from a policy document for review in Settings → Policy.
+ *   vendor-revoke-all --tenant acme   Emergency: switch vendor access off and revoke every grant.
  *
  * Environment is read from the repo-root .env when present.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { isRole } from '@aiv/core';
 import { prisma } from '@aiv/db';
+import { NZ_PSR_SAMPLE_POLICY, policyToYaml } from '@aiv/policy';
 import {
   addAppUser,
   checkConnectors,
   createTenant,
+  draftPolicyFromDocument,
+  getTenantPolicy,
   runConnectorSync,
   runTenantAnalysis,
+  saveTenantPolicy,
   seedDemo,
+  setVendorAccessEnabled,
 } from '@aiv/pipeline';
+
+const CLI_ACTOR = { email: `cli:${process.env.USER ?? 'operator'}`, role: 'CLI' };
+
+async function tenantBySlug(slug: string | undefined) {
+  return prisma.tenant.findUniqueOrThrow({ where: { slug: need(slug, 'tenant') } });
+}
+
+function output(text: string, file: string | undefined) {
+  if (file) {
+    writeFileSync(file, text);
+    console.info(`[worker] written ${file}`);
+  } else process.stdout.write(text);
+}
 
 const rootEnv = resolve(import.meta.dirname, '../../../.env');
 if (existsSync(rootEnv)) process.loadEnvFile(rootEnv);
@@ -75,6 +100,7 @@ async function main(): Promise<void> {
       role: { type: 'string' },
       password: { type: 'string' },
       department: { type: 'string' },
+      file: { type: 'string' },
     },
   });
 
@@ -112,7 +138,10 @@ async function main(): Promise<void> {
     }
     case 'add-user': {
       const role = need(a.role, 'role').toUpperCase();
-      if (!isRole(role)) throw new Error('--role must be IT, EXECUTIVE or MANAGER');
+      if (!isRole(role) || role === 'VENDOR_SUPPORT')
+        throw new Error(
+          '--role must be IT, EXECUTIVE or MANAGER (vendor access is granted in Settings → Vendor access)',
+        );
       await addAppUser(need(a.tenant, 'tenant'), {
         email: need(a.email, 'email'),
         name: a.name ?? a.email!,
@@ -134,6 +163,64 @@ async function main(): Promise<void> {
         where: { slug: need(a.tenant, 'tenant') },
       });
       await syncTenant(t.id, t.slug);
+      break;
+    }
+    case 'analyse': {
+      const t = await tenantBySlug(a.tenant);
+      const { result } = await runTenantAnalysis(t.id);
+      console.info(
+        `[worker] analysed ${t.slug}: risk ${result.scores.riskScore}, ${result.findings.length} findings, ` +
+          `${result.content?.breachingFiles ?? 0} files breaching policy`,
+      );
+      break;
+    }
+    case 'policy-import': {
+      const t = await tenantBySlug(a.tenant);
+      const out = await saveTenantPolicy(
+        t.id,
+        readFileSync(need(a.file, 'file'), 'utf8'),
+        CLI_ACTOR,
+      );
+      if (!out.ok) {
+        for (const e of out.errors) console.error(`  ✗ ${e}`);
+        throw new Error('Policy not imported.');
+      }
+      for (const w of out.warnings) console.warn(`  ! ${w}`);
+      console.info(
+        `[worker] policy "${out.policy.name}" v${out.policy.version} imported. Run 'analyse --tenant ${t.slug}' to re-evaluate.`,
+      );
+      break;
+    }
+    case 'policy-export': {
+      const t = await tenantBySlug(a.tenant);
+      const { policy, source } = await getTenantPolicy(t.id);
+      if (source === 'sample')
+        console.warn('[worker] no tenant policy set — exporting the NZ sample');
+      output(policyToYaml(policy), a.file);
+      break;
+    }
+    case 'policy-sample':
+      output(policyToYaml(NZ_PSR_SAMPLE_POLICY), a.file);
+      break;
+    case 'policy-draft': {
+      const t = await tenantBySlug(a.tenant);
+      const file = need(a.file, 'file');
+      const out = await draftPolicyFromDocument(
+        t.id,
+        { name: file.split(/[\\/]/).pop()!, bytes: new Uint8Array(readFileSync(file)) },
+        CLI_ACTOR,
+      );
+      if (!out.ok) throw new Error(out.error);
+      for (const n of out.result.notes) console.info(`  - ${n}`);
+      console.info(
+        `[worker] draft ${out.draftId} created (${out.result.method}); review it in Settings → Policy.`,
+      );
+      break;
+    }
+    case 'vendor-revoke-all': {
+      const t = await tenantBySlug(a.tenant);
+      await setVendorAccessEnabled(t.id, false, CLI_ACTOR);
+      console.info('[worker] vendor access disabled and all grants revoked');
       break;
     }
     default:

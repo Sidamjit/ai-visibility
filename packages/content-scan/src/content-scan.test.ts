@@ -250,6 +250,7 @@ describe('scanner', () => {
     siteExternalId: 'site-1',
     name: 'Payroll.xlsx',
     sizeBytes: 1000,
+    sourceVersion: 'c1',
   };
 
   it('applies allow list and size limit before download', () => {

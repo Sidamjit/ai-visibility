@@ -10,6 +10,9 @@ import {
   type NormalizedBatch,
 } from '@aiv/core';
 import { loadBatch, prisma, type Prisma } from '@aiv/db';
+import type { Policy } from '@aiv/policy';
+import { getTenantPolicy } from './policy';
+import { maybeSendTelemetry } from './telemetry';
 
 const json = (v: unknown) => v as Prisma.InputJsonValue;
 
@@ -40,6 +43,8 @@ export async function saveAnalysisRun(
       siteScores: json(result.siteScores),
       departments: json(result.departments),
       assumptions: json(result.assumptions),
+      content: result.content ? json(result.content) : undefined,
+      contentFiles: opts.simulated ? undefined : json(result.contentFiles),
       simulated: opts.simulated ?? false,
     },
   });
@@ -130,14 +135,27 @@ export async function saveAnalysisRun(
 /** Load tenant data (or use a provided batch), run analysis, persist. */
 export async function runTenantAnalysis(
   tenantId: string,
-  opts: { batch?: NormalizedBatch; asOf?: Date; simulated?: boolean; createdAt?: Date } = {},
+  opts: {
+    batch?: NormalizedBatch;
+    asOf?: Date;
+    simulated?: boolean;
+    createdAt?: Date;
+    policy?: Policy;
+  } = {},
 ): Promise<{ runId: string; result: AnalysisResult }> {
   const batch = opts.batch ?? (await loadBatch(prisma, tenantId));
   const assumptions = await getTenantAssumptions(tenantId);
-  const result = runAnalysis(batch, { assumptions, asOf: opts.asOf });
+  const policy = opts.policy ?? (await getTenantPolicy(tenantId)).policy;
+  const result = runAnalysis(batch, { assumptions, asOf: opts.asOf, policy });
   const runId = await saveAnalysisRun(tenantId, result, {
     simulated: opts.simulated,
     createdAt: opts.createdAt,
   });
+  if (!opts.simulated) {
+    const instances = await prisma.connectorInstance.findMany({ where: { tenantId } });
+    await maybeSendTelemetry(tenantId, result, {
+      connectors: instances.map((i) => i.connectorId),
+    });
+  }
   return { runId, result };
 }

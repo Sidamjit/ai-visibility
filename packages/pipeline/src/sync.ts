@@ -3,7 +3,10 @@
  * persist the normalized batch, record a SyncRun, and store the new cursor.
  */
 import { consoleLogger, getConnector, type ConnectorLogger } from '@aiv/connectors';
-import { prisma, saveBatch, type Prisma } from '@aiv/db';
+import { createContentScanner, createLlmClientFromEnv } from '@aiv/content-scan';
+import { loadKnownContentVersions, prisma, saveBatch, type Prisma } from '@aiv/db';
+import { audit } from './audit';
+import { getScanSettings, getTenantPolicy } from './policy';
 
 export interface SyncOutcome {
   ok: boolean;
@@ -37,19 +40,49 @@ export async function runConnectorSync(
   });
   try {
     const config = connector.configSchema.parse(instance.config ?? {});
+    const logger = opts.logger ?? consoleLogger;
+    // Content scanning runs HERE, inside the client's environment. File bytes
+    // and extracted text live only in this process's memory during the scan.
+    const settings = await getScanSettings(tenantId);
+    let contentScanner;
+    let knownContentVersions;
+    if (settings.enabled) {
+      const { policy } = await getTenantPolicy(tenantId);
+      const llm = settings.llmEnabled ? createLlmClientFromEnv(process.env) : null;
+      if (settings.llmEnabled && !llm)
+        logger.warn(
+          'LLM classification is enabled in settings but LLM_PROVIDER is not configured.',
+        );
+      if (llm)
+        await audit({
+          tenantId,
+          actor: 'worker',
+          action: 'scan.llm.use',
+          target: llm.endpointHost,
+          detail: { provider: llm.provider, model: llm.model },
+        });
+      contentScanner = createContentScanner({ settings, policy, llm, now: opts.now });
+      knownContentVersions = await loadKnownContentVersions(prisma, {
+        tenantId,
+        connectorInstanceId,
+      });
+    }
     const result = await connector.sync(
       {
         tenantId,
         config,
         secrets: secretsFor(connector.secretEnvVars),
-        logger: opts.logger ?? consoleLogger,
+        logger,
         now: opts.now,
+        contentScanner,
+        knownContentVersions,
       },
       (instance.cursor as Record<string, unknown> | null) ?? null,
     );
     await saveBatch(prisma, { tenantId, connectorInstanceId }, result.batch, {
       fullSync: result.fullSync,
       deletions: result.deletions,
+      contentScanScope: result.contentScanScope,
     });
     const finishedAt = new Date();
     await prisma.syncRun.update({

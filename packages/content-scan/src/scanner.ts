@@ -51,6 +51,7 @@ export function createContentScanner(opts: CreateScannerOptions = {}): ContentSc
     siteExternalId: t.siteExternalId,
     extension: extensionOf(t.name),
     sizeBytes: t.sizeBytes,
+    sourceVersion: t.sourceVersion,
     scannedAt: now().toISOString(),
   });
 

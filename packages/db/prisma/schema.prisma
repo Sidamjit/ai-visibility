@@ -9,7 +9,9 @@
 // MULTI-TENANCY: every business table carries `tenantId`. All queries MUST
 // filter by tenantId (see apps/web/lib/data.ts for the pattern).
 //
-// DATA MINIMISATION: only metadata. No file contents, prompts or messages.
+// DATA MINIMISATION: no file contents, prompts or messages are ever stored.
+// Content scanning persists only findings: classifier ids, counts, keyed hashes,
+// confidence and (optional, redacted, default OFF) short snippets — see ContentScan.
 
 generator client {
   provider = "prisma-client-js"
@@ -27,6 +29,14 @@ model Tenant {
   slug        String   @unique
   /// Editable value/cost assumptions (see @aiv/core assumptions.ts). Null = defaults.
   assumptions Json?
+  /// Client data-classification / handling policy (@aiv/policy PolicySchema). Null = NZ sample.
+  policy      Json?
+  policyUpdatedAt DateTime?
+  policyUpdatedBy String?
+  /// Content-scan settings (@aiv/core ScanSettingsSchema). Null = defaults.
+  scanSettings Json?
+  /// Master switch for the vendor-support role. Off by default; grants also need an expiry.
+  vendorAccessEnabled Boolean @default(false)
   createdAt   DateTime @default(now())
 
   users      AppUser[]
@@ -42,7 +52,9 @@ model AppUser {
   name         String
   /// bcrypt hash; null for SSO-only users.
   passwordHash String?
-  /// 'IT' | 'EXECUTIVE' | 'MANAGER'
+  /// 'IT' | 'EXECUTIVE' | 'MANAGER' | 'VENDOR_SUPPORT'
+  /// VENDOR_SUPPORT users can only sign in while an unexpired, unrevoked
+  /// VendorAccessGrant exists AND Tenant.vendorAccessEnabled is true.
   role         String
   /// For MANAGER: department they manage (filters the manager dashboard).
   department   String?
@@ -241,6 +253,99 @@ model CostItem {
   @@unique([tenantId, connectorInstanceId, externalId])
 }
 
+/// Result of reading ONE file's content. The content itself is never stored:
+/// only which classifiers matched, how often, keyed hashes for de-duplication,
+/// and (if snippetMode != 'off') short REDACTED context snippets inside `hits`.
+model ContentScan {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  connectorInstanceId String
+  locationExternalId  String
+  siteExternalId      String?
+  extension           String
+  /// Float (not Int) so >2 GB files are representable on every provider.
+  sizeBytes           Float
+  /// SHA-256 of the bytes (detects duplicates/changes; not reversible).
+  contentSha256       String?
+  /// Source change token (Graph cTag) used to skip unchanged files.
+  sourceVersion       String?
+  scannedAt           DateTime
+  /// 'scanned' | 'skipped' | 'failed'
+  status              String
+  statusReason        String?
+  textChars           Int
+  /// Sum of hit counts (fast filtering).
+  hitCount            Int
+  /// ClassifierHit[] (@aiv/core content.ts)
+  hits                Json
+  /// LlmAssessment | null — only when the client enabled their own LLM endpoint.
+  llm                 Json?
+
+  @@unique([tenantId, connectorInstanceId, locationExternalId])
+  @@index([tenantId, hitCount])
+}
+
+/// A draft policy produced from an uploaded policy document, awaiting human review.
+/// The uploaded document itself is NOT stored (only its hash and name).
+model PolicyDraft {
+  id           String    @id @default(cuid())
+  tenantId     String
+  createdAt    DateTime  @default(now())
+  createdBy    String
+  sourceName   String
+  sourceSha256 String
+  /// 'heuristic' | 'llm'
+  method       String
+  /// string[] — reviewer notes produced by the extractor.
+  notes        Json
+  /// Draft Policy (validated) as JSON.
+  draft        Json
+  /// 'pending' | 'accepted' | 'rejected'
+  status       String    @default("pending")
+  reviewedBy   String?
+  reviewedAt   DateTime?
+
+  @@index([tenantId, createdAt])
+}
+
+/// Append-only audit of who did/viewed what in THIS app. Never contains file content.
+model AuditEvent {
+  id         String   @id @default(cuid())
+  tenantId   String
+  at         DateTime @default(now())
+  /// App user email (or 'system' / 'worker').
+  actor      String
+  actorRole  String?
+  /// e.g. 'auth.login', 'page.view', 'export.csv', 'policy.update', 'vendor.grant'
+  action     String
+  /// Page path, export name, setting key …
+  target     String?
+  detail     Json?
+
+  @@index([tenantId, at])
+  @@index([tenantId, actor])
+}
+
+/// Time-boxed support access granted BY THE CLIENT to the app vendor.
+model VendorAccessGrant {
+  id         String    @id @default(cuid())
+  tenantId   String
+  /// The VENDOR_SUPPORT AppUser this grant enables.
+  appUserId  String
+  email      String
+  /// 'diagnostics' (support page only) | 'read-only' (dashboards incl. findings)
+  scope      String
+  reason     String
+  grantedBy  String
+  grantedAt  DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  revokedBy  String?
+
+  @@index([tenantId, expiresAt])
+  @@index([appUserId])
+}
+
 // ---------- Analysis output ----------
 
 /// One execution of the analysis engine. Dashboards read the latest run; trends read all.
@@ -256,6 +361,10 @@ model AnalysisRun {
   siteScores  Json
   departments Json
   assumptions Json
+  /// ContentMetrics (@aiv/analysis) — null when no policy/scans.
+  content     Json?
+  /// ClassifiedFileView[] (capped) — what was found where; no content.
+  contentFiles Json?
   /// True for back-filled demo history (trend charts); never for real tenants.
   simulated   Boolean          @default(false)
   tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
