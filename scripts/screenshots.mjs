@@ -52,7 +52,12 @@ async function shot(page, path, file, { full = true } = {}) {
 {
   const { ctx, page } = await session('exec@demo.local');
   await shot(page, '/executive', '01-executive-dashboard.png');
-  await shot(page, '/report', '07-report.png');
+  await shot(page, '/report', '07-report.png', { full: false });
+  // The same printable report rendered to PDF (what "Print / Save as PDF" produces).
+  await page.emulateMedia({ media: 'print' });
+  await page.pdf({ path: `${OUT}sample-report.pdf`, format: 'A4', printBackground: true });
+  await page.emulateMedia({ media: 'screen' });
+  console.log('saved docs/screenshots/sample-report.pdf');
   await ctx.close();
 }
 {
@@ -61,7 +66,7 @@ async function shot(page, path, file, { full = true } = {}) {
   await page.goto(`${BASE}/it`);
   const href = await page.locator('a[href^="/it/sites/"]').first().getAttribute('href');
   if (href) await shot(page, href, '03-ict-site-drilldown.png');
-  await shot(page, '/it/remediation', '04-ict-remediation-checklist.png');
+  await shot(page, '/it/remediation', '04-ict-remediation-checklist.png', { full: false });
   await shot(page, '/connectors', '08-connectors.png');
   await shot(page, '/settings/assumptions', '09-assumptions.png');
   await ctx.close();
