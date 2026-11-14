@@ -131,7 +131,7 @@ export function ScanSettingsForm({
           <span className="font-medium text-slate-800">LLM second opinion (your endpoint)</span>
           <span className="block text-xs text-slate-500">
             {llmConfigured
-              ? 'Sends extracted text of files with no detector hits to YOUR model endpoint for a classification opinion. It can only raise a classification.'
+              ? 'Sends the first 12,000 characters of each file (detected identifiers pre-redacted) to YOUR model endpoint for a classification opinion. It can only raise a classification.'
               : 'Unavailable: no LLM endpoint is configured (LLM_PROVIDER). See docs/SECURITY.md.'}
           </span>
         </span>

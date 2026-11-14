@@ -61,8 +61,17 @@ with its permissions, and `npm run worker -- create-tenant --connector my-source
 
 - Parser tests with realistic fixtures (copy real response _shapes_, fake values).
 - A `connector.test.ts` using `__fixtures__/mock-fetch.ts` that asserts: valid
-  `NormalizedBatchSchema`, cursor behaviour, warnings on 403 for optional calls, and that no
-  content endpoints are called.
+  `NormalizedBatchSchema`, cursor behaviour, warnings on 403 for optional calls, and that content is
+  downloaded only when `ctx.contentScanner` is provided (and only for allow-listed, size-capped,
+  changed items — use `ctx.knownContentVersions` to skip unchanged ones).
+
+### Content scanning in a connector
+
+If the source holds documents, download bytes only to pass them to `ctx.contentScanner.scan()`
+(`ContentScannerPort` in `@aiv/core`), check `skipReason()` first (extension/size) so skipped files
+are never downloaded, push the returned `ContentScan` into `batch.contentScans`, and drop your
+reference to the bytes. Never log or store the bytes or text. Report `contentScanScope` so deleted
+files' scans can be pruned.
 
 ## 5. Document it
 

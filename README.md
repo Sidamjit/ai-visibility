@@ -3,6 +3,11 @@
 **AI visibility & value platform.** Connects to an organisation's AI estate and its content
 platforms, then shows IT, executives and managers:
 
+- **Content vs policy** — reads file content **inside the client's environment** (never stored),
+  detects personal, financial, health and credential data with validated detectors (IRD, NZ bank,
+  NHI, passport, driver licence, cards, TFN, secrets…), classifies each file against the
+  organisation's own classification policy (NZ PSR-style sample included), and reports every file
+  that is shared, labelled, stored or retained in breach of it — with evidence and a fix.
 - **Exposure & risk** — oversharing (anyone / org-wide links, guests, public sites, broken
   inheritance, stale content), unlabelled sensitive content, dormant access, and a per-site
   **Copilot readiness** score.
@@ -18,19 +23,35 @@ platforms, then shows IT, executives and managers:
 | --------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------- |
 | ![Executive](docs/screenshots/01-executive-dashboard.png) | ![ICT](docs/screenshots/02-ict-dashboard.png) | ![Manager](docs/screenshots/05-manager-dashboard.png) |
 
+| Content & policy breaches                                    | Classification policy                                    | Vendor access (client-controlled)                       |
+| ------------------------------------------------------------ | -------------------------------------------------------- | ------------------------------------------------------- |
+| ![Breaches](docs/screenshots/10-content-policy-breaches.png) | ![Policy](docs/screenshots/11-classification-policy.png) | ![Vendor access](docs/screenshots/13-vendor-access.png) |
+
 More: [site drill-down](docs/screenshots/03-ict-site-drilldown.png) ·
 [remediation checklist](docs/screenshots/04-ict-remediation-checklist.png) ·
 [recommendations](docs/screenshots/06-recommendations.png) · [report](docs/screenshots/07-report.png)
 ([sample PDF](docs/screenshots/sample-report.pdf)) · [connectors](docs/screenshots/08-connectors.png) ·
-[assumptions](docs/screenshots/09-assumptions.png)
+[assumptions](docs/screenshots/09-assumptions.png) · [content scanning](docs/screenshots/12-content-scanning.png) ·
+[audit log](docs/screenshots/14-audit-log.png) · [support diagnostics](docs/screenshots/15-support-diagnostics.png)
+
+## Privacy model in one paragraph
+
+The app is **installed in the client's environment** (Docker Compose on-prem or the Bicep template in
+their Azure subscription). The worker downloads files from Microsoft Graph **into memory**, extracts
+text, runs the detectors and discards the bytes; only detector names, counts, keyed hashes and (if
+the client turns it on) short redacted snippets are stored. Optional LLM classification only talks to
+the client's own Azure OpenAI or local model. Nothing is sent to the vendor (telemetry is opt-in,
+anonymised counts). The vendor can only sign in if the client's admin grants a scoped, time-boxed,
+audited support login. See [SECURITY.md](docs/SECURITY.md) and [VENDOR_ACCESS.md](docs/VENDOR_ACCESS.md).
 
 ## Pilot scope (v0.1)
 
-| Source                                                                                                                         | Status                                                             |
-| ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
-| Microsoft 365 — SharePoint / OneDrive exposure, sensitivity labels, M365 Copilot usage & licences (Microsoft Graph, read-only) | **Available**                                                      |
-| Demo organisation (synthetic data, no credentials)                                                                             | **Available**                                                      |
-| ChatGPT Enterprise, Claude (Anthropic), Google Gemini, custom AI / LMS via webhook & OpenTelemetry                             | Planned (interface + TODO docs in `packages/connectors/src/stubs`) |
+| Source                                                                                                                             | Status                                                             |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Microsoft 365 — SharePoint / OneDrive exposure, sensitivity labels, M365 Copilot usage & licences (Microsoft Graph, read-only)     | **Available**                                                      |
+| SharePoint / OneDrive **file content** classification vs the client's policy (docx, xlsx, pptx, pdf, txt, csv, md, eml, msg, html) | **Available** (in-memory, client-hosted)                           |
+| Demo organisation (synthetic data, no credentials)                                                                                 | **Available**                                                      |
+| ChatGPT Enterprise, Claude (Anthropic), Google Gemini, custom AI / LMS via webhook & OpenTelemetry                                 | Planned (interface + TODO docs in `packages/connectors/src/stubs`) |
 
 ## Quick start
 
@@ -73,15 +94,17 @@ npm run dev              # http://localhost:3000
 ```bash
 npm run lint         # ESLint (whole monorepo)
 npm run typecheck    # tsc --noEmit in every workspace
-npm test             # Vitest unit tests (rules, Graph parsing, throttling, demo data)
+npm test             # Vitest unit tests (rules, validators, extraction, policy, redaction, Graph parsing…)
 npm run build        # Next.js production build
 npm run worker -- sync-all              # sync every connector + re-analyse
+npm run worker -- policy-import --tenant <slug> --file policy.yaml
 npm run screenshots  # BASE_URL=... CHROME_PATH=... — refresh docs/screenshots
 ```
 
 ## Running a real pilot
 
-See **[docs/PILOT_SETUP.md](docs/PILOT_SETUP.md)** — a step-by-step guide for the client's IT admin to create a
+Deploy into the client's environment with **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** (Docker Compose
+on-prem, or `deploy/azure/main.bicep`). Then follow **[docs/PILOT_SETUP.md](docs/PILOT_SETUP.md)** — a step-by-step guide for the client's IT admin to create a
 read-only Entra app registration, plus the commands to onboard the tenant:
 
 ```bash
@@ -97,30 +120,34 @@ apps/
   web/            Next.js (App Router) UI, auth, server actions, API routes
   worker/         CLI + scheduler: seed, onboard tenants, sync, analyse
 packages/
-  core/           brand, roles, normalized domain model (zod), assumptions, sensitivity heuristics
-  connectors/     Connector interface + Microsoft Graph, demo, planned stubs
-  analysis/       Rule engine, 14 documented rules, scoring (pure, deterministic)
+  core/           brand, roles, normalized domain model (zod), content-scan types, assumptions
+  connectors/     Connector interface + Microsoft Graph (incl. content download), demo, planned stubs
+  policy/         Classification policy schema, YAML import/export, evaluation, NZ sample, drafting
+  content-scan/   Validators, detectors, text extraction, redaction, scanner, client-only LLM adapter
+  analysis/       Rule engine, 20 documented rules (incl. policy breaches), scoring (pure, deterministic)
   db/             Prisma schema (Postgres / SQLite), persistence helpers
   pipeline/       Orchestration used by worker + web: sync → persist → analyse → store
-docs/             Architecture, pilot setup, extension guides, security, screenshots
+deploy/azure/     Bicep: Container Apps + private PostgreSQL + Key Vault in the client's subscription
+docs/             Architecture, deployment, pilot setup, policy guide, security, vendor access, screenshots
 ```
 
 ## Documentation
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — design, data flow, decisions
 - [docs/PILOT_SETUP.md](docs/PILOT_SETUP.md) — client IT admin guide (Entra app registration, permissions)
-- [docs/SECURITY.md](docs/SECURITY.md) — data minimisation, least privilege, secrets, tenancy
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — client-hosted deployment (Docker Compose, Azure Bicep)
+- [docs/SECURITY.md](docs/SECURITY.md) — content handling, LLM, telemetry, least privilege, secrets
+- [docs/VENDOR_ACCESS.md](docs/VENDOR_ACCESS.md) — zero vendor access; time-boxed support grants
+- [docs/POLICY_GUIDE.md](docs/POLICY_GUIDE.md) — classification policy format, detectors, drafting
 - [docs/ADDING_A_CONNECTOR.md](docs/ADDING_A_CONNECTOR.md)
 - [docs/ADDING_AN_ANALYSIS_RULE.md](docs/ADDING_AN_ANALYSIS_RULE.md)
 - [AGENTS.md](AGENTS.md) — conventions for AI coding assistants (and humans)
 
 ## Deployment options
 
-Web-first, multi-tenant SaaS (one deployment, many customer tenants, `tenantId` on every row).
-Because the UI, worker and data layer are standard Node + Postgres, the same code can later ship as a
-**single-tenant / on-premises** Docker deployment inside a client's own Azure subscription, or be
-wrapped as a **desktop app** (e.g. Tauri/Electron around the web UI) if a client requires it —
-no rewrite needed.
+**Client-hosted single-tenant is the primary mode**: Docker Compose on the client's server, or the
+Bicep template in the client's Azure subscription. The code still keeps `tenantId` on every row, so a
+vendor-hosted multi-tenant deployment remains possible for demos or metadata-only pilots.
 
 ## Known gaps (v0.1)
 

@@ -5,16 +5,23 @@ Read `README.md` and `docs/ARCHITECTURE.md` first.
 
 ## Golden rules
 
-1. **Metadata only, read-only.** Never add code that downloads file contents, emails, chats, or AI
-   prompts/responses, and never call a write endpoint on a customer system. If an API returns
-   content, drop it in the parser.
+1. **Read-only; content never persisted.** Never call a write endpoint on a customer system. File
+   content may be read ONLY through `ContentScannerPort` (in memory, size-capped) and must never be
+   written to the database, disk, logs, error messages, fixtures or telemetry — persist only
+   `ContentScan` (detector ids, counts, hashes, redacted snippets). Never add code that reads emails,
+   chats or AI prompts/responses, and never call a vendor-hosted AI API (LLMs go through
+   `@aiv/content-scan` `llm/guard.ts`).
 2. **Secrets only from environment variables** (`ConnectorContext.secrets`). Never store secrets in the
    database, logs, fixtures or commits.
 3. **Every query is tenant-scoped.** Take `tenantId` from the session (`requireUser/requireRole`),
    never from request params.
 4. **Product name lives in one place**: `packages/core/src/brand.ts`. Never hard-code it.
 5. **No magic numbers in rules.** Thresholds and money assumptions go in
-   `packages/core/src/assumptions.ts` with a label + help text.
+   `packages/core/src/assumptions.ts` with a label + help text; handling rules come from the tenant's
+   policy (`@aiv/policy`).
+6. **The vendor has no access by default.** New pages must call `requireRole` (audit + vendor
+   scope); mutations must use `requireRole(roles, WRITE)`. Never add phone-home calls; telemetry is
+   opt-in only (`packages/pipeline/src/telemetry.ts`).
 
 ## Where things go
 
@@ -26,6 +33,10 @@ Read `README.md` and `docs/ARCHITECTURE.md` first.
 | New page             | `apps/web/app/(app)/<route>/page.tsx`; add route roles to `ROUTE_ACCESS` in `packages/core/src/roles.ts` and nav in `app/(app)/layout.tsx` | —                                 |
 | Mutations            | Server actions in `apps/web/app/(app)/actions.ts` (re-check role!)                                                                         | —                                 |
 | Orchestration        | `packages/pipeline` (shared by web + worker)                                                                                               | —                                 |
+| New detector         | `packages/content-scan/src/classifiers/builtin.ts` (+ validator in `validators.ts`, tests with published examples)                         | `docs/POLICY_GUIDE.md`            |
+| New file format      | `packages/content-scan/src/extract/index.ts` (+ in-memory fixture in `__fixtures__/files.ts`)                                              | —                                 |
+| Policy fields        | `packages/policy/src/schema.ts` → `evaluate.ts` → regenerate `samples/nz-psr-sample.yaml`                                                  | `docs/POLICY_GUIDE.md`            |
+| Settings mutations   | `apps/web/app/(app)/settings/actions.ts` (`WRITE`)                                                                                         | —                                 |
 
 ## Code style
 
@@ -58,3 +69,5 @@ npm run lint && npm run typecheck && npm test && npm run build
 - `DATABASE_URL` decides the Prisma provider (`file:` → SQLite, `postgresql://` → Postgres); re-run
   `npm run db:generate` after switching.
 - Finding IDs are `ruleId:key` and must stay stable (remediation ticks are keyed on them).
+- The demo tenant uses the NZ sample policy with `snippetMode: 'redacted'`; demo content scans are
+  synthetic counts (there are no demo files).

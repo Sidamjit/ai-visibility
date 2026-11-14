@@ -6,17 +6,19 @@ Rules turn normalized data into **findings** with evidence and a recommended fix
 
 `packages/analysis/src/rules/<area>-<nnn>-<slug>.ts`, e.g. `ovr-007-anyone-links-without-expiry.ts`.
 
-| Prefix | Area                      |
-| ------ | ------------------------- |
-| OVR    | Oversharing / exposure    |
-| LAB    | Labelling                 |
-| IDN    | Identity & access hygiene |
-| RDY    | Copilot / AI readiness    |
-| LIC    | Licensing                 |
-| ADO    | Adoption                  |
-| CAP    | Capability                |
-| SPD    | Spend                     |
-| VAL    | Value                     |
+| Prefix | Area                        |
+| ------ | --------------------------- |
+| OVR    | Oversharing / exposure      |
+| LAB    | Labelling                   |
+| IDN    | Identity & access hygiene   |
+| RDY    | Copilot / AI readiness      |
+| LIC    | Licensing                   |
+| ADO    | Adoption                    |
+| CAP    | Capability                  |
+| SPD    | Spend                       |
+| VAL    | Value                       |
+| POL    | Content vs policy           |
+| SEC    | Security hygiene in content |
 
 Never reuse or renumber an ID — `findingKey = ruleId:key` links findings across runs and keeps
 remediation ticks.
@@ -77,7 +79,11 @@ Guidelines:
   `isActiveSeat`, `intensity`, …) instead of re-deriving them.
 - **No magic numbers**: thresholds and money go in `Assumptions` (`@aiv/core/assumptions.ts`) with a
   label and help text — they then appear in Settings and in the report automatically.
-- **Evidence is metadata**: names, counts, dates, scopes. Arrays of objects render as tables.
+- **Evidence never contains content**: names, counts, dates, scopes, and at most the already
+  redacted snippets from `ContentScan`. Arrays of objects render as tables.
+- **Content/policy rules**: use `ctx.index.content` (classified files with level, exposure facts and
+  breaches from `@aiv/policy`) and the `policyRule` helper in `rules/pol-helpers.ts`; return `[]` when
+  `ctx.policy` is null. Handling thresholds belong in the tenant policy, not in the rule.
 - **Steps are actionable**: name the admin centre/screen and the setting.
 - **Audience** decides which dashboards show it: `IT`, `EXECUTIVE`, `MANAGER`.
 - **Granularity**: one finding per site (oversharing), per department (adoption), or per org.
@@ -85,8 +91,9 @@ Guidelines:
 ## 3. Register and test
 
 1. Add to `RULES` in `packages/analysis/src/rules/index.ts`.
-2. Add a `describe` block to `rules.test.ts` using the builders in `src/test-builders.ts`
-   (positive case, negative case, severity boundaries).
+2. Add a `describe` block to `rules.test.ts` (or `policy-rules.test.ts` for content rules, with the
+   `scan()` builder) using the builders in `src/test-builders.ts` (positive case, negative case,
+   severity boundaries).
 3. `engine.test.ts` asserts every registered rule fires on the demo org — if yours doesn't, extend
    the demo generator (`packages/connectors/src/demo`) so the demo shows it.
 4. `npm test`.

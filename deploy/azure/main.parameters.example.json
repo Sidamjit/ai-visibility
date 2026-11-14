@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "namePrefix": { "value": "lumen" },
+    "location": { "value": "australiaeast" },
+    "webImage": { "value": "contosoacr.azurecr.io/lumen-web:0.2.0" },
+    "workerImage": { "value": "contosoacr.azurecr.io/lumen-worker:0.2.0" },
+    "registryServer": { "value": "contosoacr.azurecr.io" },
+    "webIngressExternal": { "value": false },
+    "allowedIpRanges": { "value": [] },
+    "appUrl": { "value": "https://lumen.internal.contoso.co.nz" },
+    "postgresAdminPassword": { "value": "<from your password manager>" },
+    "nextAuthSecret": { "value": "<openssl rand -base64 32>" },
+    "graphTenantId": { "value": "<tenant-guid>" },
+    "graphClientId": { "value": "<app-registration-client-id>" },
+    "graphClientSecret": { "value": "<client-secret>" },
+    "llmProvider": { "value": "none" },
+    "telemetryEnabled": { "value": false }
+  }
+}

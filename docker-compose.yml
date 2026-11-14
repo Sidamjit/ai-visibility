@@ -1,10 +1,15 @@
-# Local / pilot deployment: Postgres + web + worker.
+# Client-hosted, single-tenant deployment: Postgres + web + worker on the
+# CLIENT's own server/VM. File content is read by the worker in memory and is
+# never stored or sent anywhere. Outbound traffic: Microsoft Graph only (plus
+# your own LLM endpoint if you enable one). No vendor telemetry unless you set
+# TELEMETRY_ENABLED=true. See docs/DEPLOYMENT.md.
 #
 #   cp .env.example .env   # set NEXTAUTH_SECRET at minimum
 #   docker compose up --build
 #   open http://localhost:3000   (demo users: it@ / exec@ / manager@demo.local, password demo1234)
 #
 # Set SEED_DEMO=false for a real client deployment (then use the worker CLI to create the tenant).
+# Optional local LLM (Ollama, never leaves the host):  docker compose --profile local-llm up
 services:
   postgres:
     image: postgres:16-alpine
@@ -39,8 +44,10 @@ services:
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env (openssl rand -base64 32)}
       SHOW_DEMO_LOGINS: ${SEED_DEMO:-true}
+      TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-false}
     ports:
-      - '3000:3000'
+      # Bind to localhost by default; put your reverse proxy / TLS in front.
+      - '${WEB_BIND:-127.0.0.1}:3000:3000'
     depends_on:
       setup: { condition: service_completed_successfully }
 
@@ -49,8 +56,21 @@ services:
     env_file: { path: .env, required: false }
     environment:
       DATABASE_URL: postgresql://aiv:${POSTGRES_PASSWORD:-aiv}@postgres:5432/aiv
+      TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-false}
+    # Content is processed in memory; give extraction headroom.
+    mem_limit: ${WORKER_MEM_LIMIT:-2g}
     depends_on:
       setup: { condition: service_completed_successfully }
 
+  # Optional: a local model for LLM classification / policy drafting.
+  # Then set LLM_PROVIDER=openai-compatible LLM_BASE_URL=http://ollama:11434/v1 LLM_MODEL=llama3.1:8b
+  # and pull the model once:  docker compose exec ollama ollama pull llama3.1:8b
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ['local-llm']
+    volumes:
+      - ollama:/root/.ollama
+
 volumes:
   pgdata:
+  ollama:
