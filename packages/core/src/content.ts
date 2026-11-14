@@ -70,6 +70,8 @@ export const ContentScanSchema = z.object({
   sizeBytes: z.number().int().nonnegative(),
   /** SHA-256 (hex) of the file bytes. Null when skipped before download. */
   contentSha256: z.string().nullable(),
+  /** Source version (e.g. Graph cTag) — unchanged files are not re-downloaded. */
+  sourceVersion: z.string().nullable().default(null),
   scannedAt: isoDate,
   status: z.enum(SCAN_STATUSES),
   /** Why the file was skipped/failed (too large, unsupported type, encrypted, ...). */
@@ -135,6 +137,8 @@ export interface ScanTarget {
   siteExternalId: string | null;
   name: string;
   sizeBytes: number;
+  /** Source version (e.g. Graph cTag), stored so unchanged files are skipped later. */
+  sourceVersion: string | null;
 }
 
 /**

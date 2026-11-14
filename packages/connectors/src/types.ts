@@ -5,7 +5,9 @@
  * (Microsoft Graph, ChatGPT Enterprise, a webhook, ...) and translate it into the
  * normalized model from `@aiv/core`. Connectors:
  *   - are READ-ONLY against the source,
- *   - collect METADATA only (never document or prompt content),
+ *   - persist METADATA only. Connectors that can read documents (Microsoft
+ *     Graph) pass bytes to `ctx.contentScanner`, which returns content-free
+ *     classifier results; bytes are never stored,
  *   - are stateless: anything they need to remember between runs goes in the
  *     opaque `cursor` they return, which the worker persists for them,
  *   - receive secrets via `ConnectorContext.secrets` (populated from env vars),
@@ -14,7 +16,7 @@
  * See docs/ADDING_A_CONNECTOR.md for a walkthrough.
  */
 import type { z } from 'zod';
-import type { NormalizedBatch } from '@aiv/core';
+import type { ContentScannerPort, NormalizedBatch } from '@aiv/core';
 
 /** One API permission/scope the source admin must grant, and why we need it. */
 export interface PermissionRequirement {
@@ -50,6 +52,16 @@ export interface ConnectorContext<TConfig = unknown> {
   fetch?: typeof fetch;
   /** Injected clock for deterministic tests. */
   now?: () => Date;
+  /**
+   * Content scanner (from @aiv/content-scan), provided by the pipeline when the
+   * tenant has content scanning enabled. Absent = metadata-only sync.
+   */
+  contentScanner?: ContentScannerPort;
+  /**
+   * locationExternalId -> source version (e.g. Graph cTag) of files already
+   * scanned, so re-enumerations skip unchanged files.
+   */
+  knownContentVersions?: ReadonlyMap<string, { version: string; hadHits: boolean }>;
 }
 
 /** Opaque, JSON-serializable state a connector uses for incremental sync. */
@@ -72,6 +84,13 @@ export interface SyncResult {
   fullSync: boolean;
   /** External IDs the source reports as deleted since the last cursor. */
   deletions: { locations: string[]; grants: string[] };
+  /**
+   * Present when content scanning ran. On a full enumeration, `seenFileIds`
+   * lists every file id seen, so stored scans of files that no longer exist
+   * can be removed (content scans survive full syncs so unchanged files are not
+   * re-downloaded).
+   */
+  contentScanScope?: { fullEnumeration: boolean; seenFileIds: string[]; deletedFileIds: string[] };
   /** Counters for the sync log (items scanned, API calls, ...). */
   stats: Record<string, number>;
   /** Non-fatal problems (e.g. optional permission missing). Shown in the UI. */

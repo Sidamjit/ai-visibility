@@ -18,6 +18,12 @@ import { departmentUnderuseRule } from './ado-001-department-underuse';
 import { capabilityGapsRule } from './cap-001-capability-gaps';
 import { spendVsAdoptionRule } from './spd-001-spend-vs-adoption';
 import { valueOpportunityRule } from './val-001-value-opportunity';
+import { policySharingRule } from './pol-001-sharing';
+import { policyAudienceRule } from './pol-002-audience';
+import { policyLabelRule } from './pol-003-labels';
+import { policyLocationRule } from './pol-004-location';
+import { policyRetentionRule } from './pol-005-retention';
+import { secretsInContentRule } from './sec-001-secrets-in-content';
 
 export const RULES: readonly RuleDefinition[] = [
   anyoneLinksRule,
@@ -34,6 +40,13 @@ export const RULES: readonly RuleDefinition[] = [
   capabilityGapsRule,
   spendVsAdoptionRule,
   valueOpportunityRule,
+  // Content classification vs policy (need content scans + a tenant policy).
+  policySharingRule,
+  policyAudienceRule,
+  policyLabelRule,
+  policyLocationRule,
+  policyRetentionRule,
+  secretsInContentRule,
 ];
 
 export { TRAINING_BY_FEATURE } from './cap-001-capability-gaps';

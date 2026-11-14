@@ -93,6 +93,11 @@ const pct = (x: number) => Math.round(Math.max(0, Math.min(1, x)) * 100);
  *   severity   10%  critical/high findings density (critical=2, high=1 points; saturates at 4 points per site)
  *   waste      10%  share of paid seats that are inactive
  *
+ * When content scanning + a policy are in place, a POLICY component is added
+ * and the weights become: exposure 30, labelling 15, readiness 15, severity 10,
+ * waste 10, policy 20 — where policy = share of classified files (above the
+ * default level) that breach their level's handling rules.
+ *
  * VALUE (0-100, higher = better) = weighted average of:
  *   adoption   40%  active seats / licensed seats
  *   breadth    20%  average apps used per active user / 6
@@ -130,13 +135,29 @@ export function computeScores(
     severity: pct(severityDensity),
     waste: pct(metrics.licensedSeats ? metrics.inactiveSeats / metrics.licensedSeats : 0),
   };
-  const riskScore = Math.round(
-    riskComponents.exposure * 0.4 +
-      riskComponents.labelling * 0.2 +
-      riskComponents.readiness * 0.2 +
-      riskComponents.severity * 0.1 +
-      riskComponents.waste * 0.1,
-  );
+  const content = index.content?.metrics;
+  let riskScore: number;
+  let allRiskComponents: Record<string, number> = riskComponents;
+  if (content && content.classifiedFiles > 0) {
+    const policyComponent = pct(content.breachingFiles / content.classifiedFiles);
+    allRiskComponents = { ...riskComponents, policy: policyComponent };
+    riskScore = Math.round(
+      riskComponents.exposure * 0.3 +
+        riskComponents.labelling * 0.15 +
+        riskComponents.readiness * 0.15 +
+        riskComponents.severity * 0.1 +
+        riskComponents.waste * 0.1 +
+        policyComponent * 0.2,
+    );
+  } else {
+    riskScore = Math.round(
+      riskComponents.exposure * 0.4 +
+        riskComponents.labelling * 0.2 +
+        riskComponents.readiness * 0.2 +
+        riskComponents.severity * 0.1 +
+        riskComponents.waste * 0.1,
+    );
+  }
 
   const valueComponents = {
     adoption: pct(metrics.adoptionRate),
@@ -147,5 +168,5 @@ export function computeScores(
     valueComponents.adoption * 0.4 + valueComponents.breadth * 0.2 + valueComponents.roi * 0.4,
   );
 
-  return { riskScore, valueScore, riskComponents, valueComponents };
+  return { riskScore, valueScore, riskComponents: allRiskComponents, valueComponents };
 }

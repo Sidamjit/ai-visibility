@@ -20,9 +20,9 @@ export const GRAPH_PERMISSIONS: readonly PermissionRequirement[] = [
     name: 'Files.Read.All',
     type: 'Application',
     reason:
-      'Read file/folder METADATA and sharing permissions (anyone links, organisation-wide links, guests, unique permissions). File contents are never downloaded.',
+      'Read file/folder metadata and sharing permissions, and (when content scanning is enabled) download file content INTO MEMORY inside the client-hosted app to classify it against the data-classification policy. Content is discarded after classification; only counts, hashes and optional redacted snippets are stored. Also reads the sensitivity label applied to classified files.',
     dataAccessed:
-      'Item names, paths, modified dates, sharing links/permissions (GET /drives/{id}/root/delta, /items/{id}/permissions).',
+      'Item names, paths, sizes, cTags, modified dates, sharing links/permissions (GET /drives/{id}/root/delta, /items/{id}/permissions); file bytes (GET /drives/{id}/items/{id}/content, streamed, size-capped); applied label ids (POST /drives/{id}/items/{id}/extractSensitivityLabels — a read action that requires only Files.Read.All).',
     required: true,
   },
   {

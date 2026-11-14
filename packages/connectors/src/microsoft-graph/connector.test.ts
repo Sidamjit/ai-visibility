@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { NormalizedBatchSchema } from '@aiv/core';
+import {
+  NormalizedBatchSchema,
+  ScanSettingsSchema,
+  type ContentScan,
+  type ContentScannerPort,
+  type ScanTarget,
+} from '@aiv/core';
 import { silentLogger } from '../types';
 import * as fx from '../__fixtures__/graph';
 import { mockFetch, tokenRoute, type MockResponse } from '../__fixtures__/mock-fetch';
@@ -126,5 +132,138 @@ describe('microsoftGraphConnector.sync', () => {
     await expect(microsoftGraphConnector.sync({ ...ctx(impl), secrets: {} }, null)).rejects.toThrow(
       /GRAPH_CLIENT_SECRET/,
     );
+  });
+
+  describe('content scanning', () => {
+    /** Fake scanner: flags files whose bytes contain "IRD". Records what it saw. */
+    function fakeScanner(maxFilesPerRun = 100) {
+      const seen: string[] = [];
+      const settings = ScanSettingsSchema.parse({
+        maxFilesPerRun,
+        allowedExtensions: ['xlsx', 'docx'],
+      });
+      const base = (t: ScanTarget): ContentScan => ({
+        locationExternalId: t.locationExternalId,
+        siteExternalId: t.siteExternalId,
+        extension: t.name.split('.').pop() ?? '',
+        sizeBytes: t.sizeBytes,
+        sourceVersion: t.sourceVersion,
+        contentSha256: null,
+        scannedAt: '2026-11-14T00:00:00.000Z',
+        status: 'skipped',
+        statusReason: null,
+        textChars: 0,
+        hits: [],
+        llm: null,
+      });
+      const scanner: ContentScannerPort = {
+        settings,
+        skipReason: (t) => (/\.(xlsx|docx)$/.test(t.name) ? null : 'file type not in allow list'),
+        skipped: (t, reason) => ({ ...base(t), statusReason: reason }),
+        async scan(t, bytes) {
+          const text = new TextDecoder().decode(bytes);
+          seen.push(t.locationExternalId);
+          bytes.fill(0);
+          return {
+            ...base(t),
+            status: 'scanned',
+            contentSha256: 'abc',
+            textChars: text.length,
+            hits: text.includes('IRD')
+              ? [
+                  {
+                    classifierId: 'nz-ird-number',
+                    category: 'government-id',
+                    count: 2,
+                    distinctValues: 2,
+                    confidence: 'high',
+                    snippets: [],
+                  },
+                ]
+              : [],
+          };
+        },
+      };
+      return { scanner, seen };
+    }
+    const withContent: Array<[string | RegExp, MockResponse]> = [
+      ['/items/it1/content', { body: 'payroll IRD 49091850' }],
+      ['/items/it2/content', { body: 'lunch menu IRD 35901981 (staff list)' }],
+      ['/items/it3/content', { body: 'quarterly numbers' }],
+      [
+        /\/items\/it[0-9]\/extractSensitivityLabels/,
+        { body: { value: { labels: [{ sensitivityLabelId: 'lbl-c' }] } } },
+      ],
+      ['skiptoken=page2', { body: fx.deltaPage2 }],
+      ['/drives/drv1/root/delta', { body: fx.deltaPage1 }],
+    ];
+
+    it('downloads files in memory, keeps classified files and reads their labels', async () => {
+      const { impl, calls } = mockFetch(routes(withContent));
+      const { scanner, seen } = fakeScanner();
+      const res = await microsoftGraphConnector.sync(
+        { ...ctx(impl), contentScanner: scanner },
+        null,
+      );
+      expect(seen.sort()).toEqual(['it1', 'it2', 'it3']);
+      expect(res.batch.contentScans).toHaveLength(3);
+      // it2 is neither shared nor sensitively named, but its CONTENT is classified -> kept.
+      const it2 = res.batch.locations.find((l) => l.externalId === 'it2');
+      expect(it2).toMatchObject({ sensitivityLabelId: 'lbl-c' });
+      expect(calls.filter((c) => c.url.includes('extractSensitivityLabels'))).toHaveLength(2);
+      expect(calls.find((c) => c.url.includes('extractSensitivityLabels'))?.init?.method).toBe(
+        'POST',
+      );
+      expect(res.stats).toMatchObject({ filesDownloaded: 3, filesWithHits: 2 });
+      expect(res.contentScanScope).toMatchObject({ fullEnumeration: true });
+      expect(res.contentScanScope?.seenFileIds.sort()).toEqual(['it1', 'it2', 'it3']);
+    });
+
+    it('skips unchanged files using known content versions', async () => {
+      const { scanner, seen } = fakeScanner();
+      const known = new Map([
+        ['it1', { version: 'c-it1', hadHits: true }],
+        ['it2', { version: 'old', hadHits: false }],
+      ]);
+      const delta1 = {
+        ...fx.deltaPage1,
+        value: fx.deltaPage1.value.map((v) => (v.id === 'it1' ? { ...v, cTag: 'c-it1' } : v)),
+      };
+      const { impl: impl2 } = mockFetch(
+        routes([
+          ['skiptoken=page2', { body: fx.deltaPage2 }],
+          ['/drives/drv1/root/delta', { body: delta1 }],
+          ...withContent,
+        ]),
+      );
+      const res = await microsoftGraphConnector.sync(
+        { ...ctx(impl2), contentScanner: scanner, knownContentVersions: known },
+        null,
+      );
+      expect(seen).not.toContain('it1');
+      expect(res.stats).toMatchObject({ filesUnchanged: 1 });
+      // Still kept (shared + previously classified) and its label refreshed.
+      expect(res.batch.locations.find((l) => l.externalId === 'it1')?.sensitivityLabelId).toBe(
+        'lbl-c',
+      );
+    });
+
+    it('does not advance the delta cursor when the per-run cap defers files', async () => {
+      const { impl } = mockFetch(routes(withContent));
+      const { scanner, seen } = fakeScanner(1);
+      const res = await microsoftGraphConnector.sync(
+        { ...ctx(impl), contentScanner: scanner },
+        null,
+      );
+      expect(seen).toHaveLength(1);
+      expect(res.nextCursor.driveDeltaLinks).toEqual({});
+      expect(res.warnings.join(' ')).toMatch(/per-run cap/);
+    });
+
+    it('never downloads content without a scanner', async () => {
+      const { impl, calls } = mockFetch(routes(withContent));
+      await microsoftGraphConnector.sync(ctx(impl), null);
+      expect(calls.some((c) => c.url.includes('/content'))).toBe(false);
+    });
   });
 });

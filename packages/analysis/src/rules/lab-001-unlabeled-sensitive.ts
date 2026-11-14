@@ -15,7 +15,7 @@ export const unlabeledSensitiveRule: RuleDefinition = {
   description:
     'Locations whose metadata indicates sensitive content (name keywords) but carry no sensitive label.',
   rationale:
-    'Microsoft Purview labels drive encryption, DLP and Copilot protections. Without a label, sensitive content is treated like any other document. Detection here is metadata-only (names), so treat it as triage.',
+    'Microsoft Purview labels drive encryption, DLP and Copilot protections. Without a label, sensitive content is treated like any other document. This rule uses names only (triage for unscanned content); POL-003 covers files whose CONTENT was classified.',
   evaluate(ctx) {
     return eachSite(ctx).flatMap(({ site, locations }) => {
       const hits = locations.filter((l) => l.likelySensitive && !ctx.index.hasSensitiveLabel(l));
@@ -32,7 +32,8 @@ export const unlabeledSensitiveRule: RuleDefinition = {
           summary: `Detected from names (${[...new Set(hits.flatMap((h) => h.sensitivityReasons))].slice(0, 4).join(', ')}).`,
           evidence: {
             items: hits.map((l) => describe(ctx, l)),
-            detection: 'metadata (name keywords), content not inspected',
+            detection:
+              'metadata (name keywords); content-based label breaches are reported by POL-003',
           },
           siteExternalId: site.externalId,
           departmentName: site.ownerDepartment,

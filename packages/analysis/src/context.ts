@@ -5,6 +5,8 @@
  * as "what counts as sensitive" or "what counts as an active seat", so every
  * rule, score and dashboard agrees on the same definitions.
  */
+import type { Policy } from '@aiv/policy';
+import { buildContentIndex, type ContentIndex } from './content';
 import type {
   Assumptions,
   ContentLocation,
@@ -34,6 +36,9 @@ export interface AnalysisIndex {
   /** Department name -> enabled, non-guest people in it. */
   peopleByDepartment: Map<string, Identity[]>;
 
+  /** Content-scan classification (null when no policy or no scans). */
+  content: ContentIndex | null;
+
   isSensitive(loc: ContentLocation): boolean;
   hasSensitiveLabel(loc: ContentLocation): boolean;
   isStale(loc: ContentLocation): boolean;
@@ -54,6 +59,7 @@ export function buildIndex(
   data: NormalizedBatch,
   assumptions: Assumptions,
   asOf: Date,
+  policy: Policy | null = null,
 ): AnalysisIndex {
   const labelsById = new Map(data.labels.map((l) => [l.externalId, l]));
   const locationsById = new Map(data.locations.map((l) => [l.externalId, l]));
@@ -85,7 +91,30 @@ export function buildIndex(
   const featureBreadth = (u: UsageSummary) =>
     Object.values(u.featureLastActivity).filter((d) => d !== null).length;
 
+  const content =
+    policy && data.contentScans.length
+      ? buildContentIndex(
+          data,
+          {
+            locationsById,
+            grantsByLocation,
+            labelsById,
+            identityName: (id) => identitiesById.get(id)?.displayName,
+          },
+          policy,
+          asOf,
+        )
+      : null;
+  const defaultRank = policy
+    ? (policy.levels.find((l) => l.id === policy.defaultLevel)?.rank ?? 0)
+    : 0;
+  const contentSensitive = (loc: ContentLocation) => {
+    const f = content?.byLocation.get(loc.externalId);
+    return Boolean(f && f.classification.level.rank > defaultRank);
+  };
+
   const index: AnalysisIndex = {
+    content,
     locationsById,
     sites,
     locationsBySite,
@@ -95,8 +124,8 @@ export function buildIndex(
     usageByIdentity,
     peopleByDepartment,
     hasSensitiveLabel,
-    /** Sensitive = carries a sensitive label OR metadata heuristics flag it. */
-    isSensitive: (loc) => hasSensitiveLabel(loc) || loc.likelySensitive,
+    /** Sensitive = sensitive label, OR name heuristics, OR content classified above the default level. */
+    isSensitive: (loc) => hasSensitiveLabel(loc) || loc.likelySensitive || contentSensitive(loc),
     isStale: (loc) => ageDays(loc.lastModifiedAt) > assumptions.staleContentDays,
     isBroadSite: (site) =>
       site.visibility === 'public' ||

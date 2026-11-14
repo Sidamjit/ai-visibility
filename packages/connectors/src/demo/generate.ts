@@ -14,6 +14,7 @@ import {
   type SharingGrant,
 } from '@aiv/core';
 import { createRandom } from './random';
+import { CONTENT_PROFILES, HIDDEN_FILES, backgroundScans, demoScan } from './content';
 import { COPILOT_APPS, DEMO_DEPARTMENTS, DEMO_SITES, FIRST_NAMES, LAST_NAMES } from './org';
 
 export interface DemoOptions {
@@ -231,11 +232,35 @@ export function generateDemoBatch(opts: DemoOptions = {}): NormalizedBatch {
       });
     }
 
-    site.items.forEach((itemName, iIdx) => {
+    // Named items, then files whose innocuous names hide sensitive content.
+    const hidden = HIDDEN_FILES.filter(([s]) => s === site.name);
+    const allItems = [...site.items, ...hidden.map(([, name]) => name)];
+    const cr = createRandom(seed * 15_485_863 + sIdx);
+    b.contentScans.push(...backgroundScans(cr, siteId, asOf.getTime()));
+
+    allItems.forEach((itemName, iIdx) => {
       const itemId = `${siteId}-item-${iIdx + 1}`;
       const ir = createRandom(seed * 104_729 + sIdx * 1_000 + iIdx);
+      const hiddenSpec = hidden.find(([, n]) => n === itemName);
+      const profile = hiddenSpec?.[2] ?? CONTENT_PROFILES[itemName] ?? null;
+      // Remediation also cleans up sensitive files (moved, minimised or deleted).
+      // Separate stream so content data never shifts the sharing/label randomness.
+      const contentRng = createRandom(seed * 7_368_787 + sIdx * 1_000 + iIdx);
+      const cleanupRoll = contentRng.next();
+      if (hiddenSpec && cleanupRoll < progress * 0.5) return;
       const reasons = sensitiveNameReasons(itemName);
       const isFile = /\.[a-z0-9]{2,4}$/i.test(itemName);
+      if (isFile) {
+        b.contentScans.push(
+          demoScan(contentRng, {
+            locationExternalId: itemId,
+            siteExternalId: siteId,
+            name: itemName,
+            asOfMs: asOf.getTime(),
+            profile,
+          }),
+        );
+      }
       const grants: SharingGrant[] = [];
       const rAnyone = ir.next();
       const rOrg = ir.next();
@@ -280,7 +305,14 @@ export function generateDemoBatch(opts: DemoOptions = {}): NormalizedBatch {
           expiresAt: null,
         });
       }
-      const labelled = site.labelled ? rLabel < 0.7 : rLabel < 0.08 + progress * 0.5;
+      // Remediation labels content-classified files first (auto-labelling policies).
+      const labelled = profile
+        ? site.labelled
+          ? rLabel < 0.7 + progress * 0.3
+          : rLabel < 0.1 + progress * 0.85
+        : site.labelled
+          ? rLabel < 0.7
+          : rLabel < 0.08 + progress * 0.5;
       b.locations.push({
         externalId: itemId,
         parentExternalId: libId,
@@ -293,9 +325,11 @@ export function generateDemoBatch(opts: DemoOptions = {}): NormalizedBatch {
         memberCount: null,
         guestMemberCount: null,
         itemCount: isFile ? null : ir.int(5, 300),
-        lastModifiedAt: iso(modifiedMs + ir.int(0, 200) * DAY),
+        lastModifiedAt: hiddenSpec?.[3]
+          ? iso(hiddenSpec[3] * DAY)
+          : iso(modifiedMs + ir.int(0, 200) * DAY),
         sensitivityLabelId: labelled
-          ? reasons.length
+          ? reasons.length || profile
             ? 'lbl-highly-confidential'
             : 'lbl-general'
           : null,

@@ -24,6 +24,7 @@ function run(rule: RuleDefinition, data: ReturnType<typeof batch>) {
     data,
     index: buildIndex(data, DEFAULT_ASSUMPTIONS, AS_OF),
     assumptions: DEFAULT_ASSUMPTIONS,
+    policy: null,
     asOf: AS_OF,
   };
   return rule.evaluate(ctx);

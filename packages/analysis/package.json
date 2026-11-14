@@ -13,7 +13,8 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@aiv/core": "0.1.0"
+    "@aiv/core": "0.1.0",
+    "@aiv/policy": "0.1.0"
   },
   "devDependencies": {
     "@aiv/connectors": "0.1.0"

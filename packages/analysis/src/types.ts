@@ -7,6 +7,8 @@
  * (use `ctx.asOf`), so every rule is deterministic and unit-testable.
  */
 import type { Assumptions, NormalizedBatch, Role } from '@aiv/core';
+import type { Policy } from '@aiv/policy';
+import type { ClassifiedFileView, ContentMetrics } from './content';
 import type { AnalysisIndex } from './context';
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'] as const;
@@ -30,6 +32,7 @@ export const CATEGORIES = [
   'capability',
   'spend',
   'value',
+  'policy',
 ] as const;
 export type Category = (typeof CATEGORIES)[number];
 
@@ -76,6 +79,8 @@ export interface RuleContext {
   data: NormalizedBatch;
   index: AnalysisIndex;
   assumptions: Assumptions;
+  /** Tenant data-classification policy (null = policy rules are skipped). */
+  policy: Policy | null;
   asOf: Date;
 }
 
@@ -171,4 +176,8 @@ export interface AnalysisResult {
   siteScores: SiteScore[];
   departments: DepartmentStat[];
   assumptions: Assumptions;
+  /** Content-scan & policy summary (null when no scans or no policy). */
+  content: ContentMetrics | null;
+  /** Classified / breaching files (content-free rows), most sensitive first. */
+  contentFiles: ClassifiedFileView[];
 }

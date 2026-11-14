@@ -4,6 +4,8 @@
  */
 import {
   emptyBatch,
+  type ClassifierHit,
+  type ContentScan,
   type ContentLocation,
   type NormalizedBatch,
   type SharingGrant,
@@ -137,6 +139,37 @@ export function batch(over: Partial<NormalizedBatch> = {}): NormalizedBatch {
       { externalId: 'lbl-general', name: 'General', priority: 1, isSensitive: false },
       { externalId: 'lbl-conf', name: 'Confidential', priority: 2, isSensitive: true },
     ],
+    ...over,
+  };
+}
+
+/** A content-scan result for a file, with hits given as [classifierId, count, distinct?]. */
+export function scan(
+  locationId: string,
+  siteId: string,
+  hits: Array<[string, number, number?]>,
+  over: Partial<ContentScan> = {},
+): ContentScan {
+  return {
+    locationExternalId: locationId,
+    siteExternalId: siteId,
+    extension: 'xlsx',
+    sizeBytes: 1000,
+    contentSha256: 'a'.repeat(64),
+    sourceVersion: 'c1',
+    scannedAt: daysAgo(0),
+    status: 'scanned',
+    statusReason: null,
+    textChars: 500,
+    hits: hits.map(([classifierId, count, distinct]): ClassifierHit => ({
+      classifierId,
+      category: 'government-id',
+      count,
+      distinctValues: distinct ?? count,
+      confidence: 'high',
+      snippets: [],
+    })),
+    llm: null,
     ...over,
   };
 }

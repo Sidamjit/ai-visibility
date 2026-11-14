@@ -8,21 +8,30 @@
  *   3. Copilot usage report         (/reports/getMicrosoft365CopilotUsageUserDetail)
  *   4. M365 groups -> site mapping  (visibility, labels, member & guest counts)
  *   5. Sites -> libraries           (/sites/getAllSites, /sites/{id}/drives)
- *   6. Per library delta query      (items; only SHARED or SENSITIVE-NAMED items are kept)
+ *   6. Per library delta query      (items; only SHARED, SENSITIVE-NAMED or
+ *                                    CONTENT-CLASSIFIED items are kept)
+ *   6b. Content scan (optional)     (/drives/{d}/items/{i}/content, in memory only,
+ *                                    handed to ctx.contentScanner; see @aiv/content-scan)
+ *   6c. File sensitivity label      (POST .../extractSensitivityLabels — a read
+ *                                    action needing only Files.Read.All)
  *   7. Permissions for kept items   (/drives/{d}/items/{i}/permissions)
  *
  * Incremental sync: step 6 stores one `deltaLink` per drive in the cursor, so the
  * next run only receives changed items. Steps 1-5 are cheap and always re-read.
+ * Content is re-downloaded only when a file's cTag (content version) changes.
+ * If the per-run download cap is reached, that drive's deltaLink is NOT
+ * advanced, so remaining files are picked up next run (unchanged ones skipped).
  */
 import { z } from 'zod';
 import {
   emptyBatch,
   type ContentLocation,
+  type ContentScan,
   type NormalizedBatch,
   type SharingGrant,
 } from '@aiv/core';
 import type { Connector, ConnectorContext, ConnectorCursor, SyncResult } from '../types';
-import { mapLimit } from '../util';
+import { createLimiter, mapLimit } from '../util';
 import { GraphClient, GraphError } from './client';
 import { GRAPH_PERMISSIONS } from './permissions';
 import {
@@ -64,6 +73,12 @@ export const graphConfigSchema = z.object({
   sensitiveLabelFromPriority: z.number().int().default(2),
   /** Copilot report period (report v2 periods; D28 ≈ one month). */
   copilotReportPeriod: z.enum(['D7', 'D28', 'D90', 'D180']).default('D28'),
+  /**
+   * Read the sensitivity label of files that the content scanner classified
+   * (driveItem extractSensitivityLabels; Files.Read.All). Only used when content
+   * scanning is enabled.
+   */
+  readFileLabels: z.boolean().default(true),
 });
 export type GraphConfig = z.infer<typeof graphConfigSchema>;
 
@@ -112,7 +127,7 @@ async function optional<T>(
 const USER_SELECT =
   'id,displayName,mail,userPrincipalName,department,jobTitle,userType,accountEnabled,assignedLicenses';
 const ITEM_SELECT =
-  'id,name,webUrl,lastModifiedDateTime,parentReference,folder,file,shared,root,deleted';
+  'id,name,webUrl,lastModifiedDateTime,parentReference,folder,file,size,cTag,shared,root,deleted';
 
 export const microsoftGraphConnector: Connector<GraphConfig> = {
   id: 'microsoft-graph',
@@ -308,6 +323,103 @@ export const microsoftGraphConnector: Connector<GraphConfig> = {
     let itemsScanned = 0;
     let permissionCalls = 0;
 
+    // Content scanning state (only when the pipeline provided a scanner).
+    const scanner = ctx.contentScanner;
+    const known = ctx.knownContentVersions;
+    const download = createLimiter(scanner?.settings.concurrency ?? 1);
+    const maxBytes = (scanner?.settings.maxFileSizeMb ?? 0) * 1024 * 1024;
+    let downloadBudget = scanner?.settings.maxFilesPerRun ?? 0;
+    const scanStats = {
+      filesDownloaded: 0,
+      bytesScanned: 0,
+      filesUnchanged: 0,
+      filesNotInAllowList: 0,
+      filesSkipped: 0,
+      filesFailed: 0,
+      filesWithHits: 0,
+      labelCalls: 0,
+    };
+    let capReached = false;
+    const seenFileIds: string[] = [];
+    const deletedFileIds: string[] = [];
+    const labelWarnings = new Set<string>();
+
+    /** Download + scan one file. Returns the scan (or null when unchanged / not applicable). */
+    const scanFile = async (
+      item: GraphDriveItem,
+      driveId: string,
+      siteId: string,
+      name: string,
+    ): Promise<{ scan: ContentScan | null; unchangedWithHits: boolean; deferred: boolean }> => {
+      if (!scanner || !item.file) return { scan: null, unchangedWithHits: false, deferred: false };
+      const target = {
+        locationExternalId: item.id,
+        siteExternalId: siteId,
+        name,
+        sizeBytes: item.size ?? 0,
+        sourceVersion: item.cTag ?? null,
+      };
+      const reason = scanner.skipReason(target);
+      if (reason) {
+        if (reason.startsWith('file type')) {
+          scanStats.filesNotInAllowList++;
+          return { scan: null, unchangedWithHits: false, deferred: false };
+        }
+        scanStats.filesSkipped++;
+        return { scan: scanner.skipped(target, reason), unchangedWithHits: false, deferred: false };
+      }
+      const prev = known?.get(item.id);
+      if (prev && target.sourceVersion && prev.version === target.sourceVersion) {
+        scanStats.filesUnchanged++;
+        return { scan: null, unchangedWithHits: prev.hadHits, deferred: false };
+      }
+      if (downloadBudget <= 0) {
+        capReached = true;
+        return { scan: null, unchangedWithHits: false, deferred: true };
+      }
+      downloadBudget--;
+      return download(async () => {
+        let bytes: Uint8Array;
+        try {
+          bytes = await client.getBytes(`/drives/${driveId}/items/${item.id}/content`, maxBytes);
+        } catch (err) {
+          scanStats.filesFailed++;
+          const status =
+            err instanceof GraphError ? `${err.status} ${err.code ?? ''}`.trim() : 'error';
+          return {
+            scan: { ...scanner.skipped(target, `download failed (${status})`), status: 'failed' },
+            unchangedWithHits: false,
+            deferred: false,
+          };
+        }
+        scanStats.filesDownloaded++;
+        scanStats.bytesScanned += bytes.byteLength;
+        const scan = await scanner.scan(target, bytes); // zero-fills `bytes`
+        if (scan.status === 'failed') scanStats.filesFailed++;
+        if (scan.hits.length) scanStats.filesWithHits++;
+        return { scan, unchangedWithHits: false, deferred: false };
+      });
+    };
+
+    /** Applied label of a classified file (best effort; see PILOT_SETUP for limits). */
+    const fileLabel = async (driveId: string, itemId: string): Promise<string | null> => {
+      scanStats.labelCalls++;
+      try {
+        const res = await client.postAction<{
+          value?: { labels?: Array<{ sensitivityLabelId?: string }> };
+          labels?: Array<{ sensitivityLabelId?: string }>;
+        }>(`/drives/${driveId}/items/${itemId}/extractSensitivityLabels`);
+        const labels = res.value?.labels ?? res.labels ?? [];
+        return labels[0]?.sensitivityLabelId ?? null;
+      } catch (err) {
+        if (err instanceof GraphError && [400, 403, 404, 423].includes(err.status)) {
+          labelWarnings.add(`${err.status} ${err.code ?? ''}`.trim());
+          return null;
+        }
+        throw err;
+      }
+    };
+
     await mapLimit(sites, config.concurrency, async (site) => {
       const drives = await optional(
         warnings,
@@ -322,9 +434,8 @@ export const microsoftGraphConnector: Connector<GraphConfig> = {
         batch.locations.push(parseDrive(drive, site.id));
 
         // 6. Delta enumeration of the library (incremental when we have a deltaLink).
-        const start =
-          cursor.driveDeltaLinks[drive.id] ??
-          `/drives/${drive.id}/root/delta?$select=${ITEM_SELECT}`;
+        const previousLink = cursor.driveDeltaLinks[drive.id];
+        const start = previousLink ?? `/drives/${drive.id}/root/delta?$select=${ITEM_SELECT}`;
         const { items, deltaLink, truncated } = await client.delta<GraphDriveItem>(start, {
           // hierarchicalsharing makes Graph report sharing changes on the item where they happen.
           headers: {
@@ -336,19 +447,40 @@ export const microsoftGraphConnector: Connector<GraphConfig> = {
           warnings.push(
             `Library ${drive.name ?? drive.id} truncated at ${config.maxItemsPerDrive} items.`,
           );
-        if (deltaLink) nextLinks[drive.id] = deltaLink;
-        else delete nextLinks[drive.id];
         itemsScanned += items.length;
+        let driveDeferred = false;
 
-        for (const item of items) {
+        await mapLimit(items, scanner ? scanner.settings.concurrency : 1, async (item) => {
           if (item.deleted) {
             deletions.locations.push(item.id);
-            continue;
+            deletedFileIds.push(item.id);
+            return;
           }
-          if (item.root) continue;
+          if (item.root) return;
           const loc = parseDriveItem(item, drive.id, site.id);
-          // Data minimisation: only keep items that are shared or look sensitive.
-          if (!item.shared && !loc.likelySensitive) continue;
+          if (item.file && fullSync) seenFileIds.push(item.id);
+
+          // 6b. Content scan.
+          const { scan, unchangedWithHits, deferred } = await scanFile(
+            item,
+            drive.id,
+            site.id,
+            loc.name,
+          );
+          if (deferred) driveDeferred = true;
+          if (scan) batch.contentScans.push(scan);
+          const classified = unchangedWithHits || Boolean(scan?.hits.length);
+
+          // Data minimisation: only keep items that are shared, look sensitive, or hold sensitive content.
+          if (!item.shared && !loc.likelySensitive && !classified) {
+            // Incremental: a previously kept item may no longer qualify; drop its stale row.
+            if (!fullSync) deletions.locations.push(item.id);
+            return;
+          }
+
+          // 6c. File-level sensitivity label for classified content.
+          if (classified && config.readFileLabels)
+            loc.sensitivityLabelId = await fileLabel(drive.id, item.id);
 
           // 7. Permissions for kept items.
           let grants: SharingGrant[] = [];
@@ -369,9 +501,22 @@ export const microsoftGraphConnector: Connector<GraphConfig> = {
           };
           batch.locations.push(withFlag);
           batch.grants.push(...grants);
-        }
+        });
+
+        // Advance the cursor only when every file in this drive was handled.
+        if (deltaLink && !driveDeferred) nextLinks[drive.id] = deltaLink;
+        else if (!deltaLink) delete nextLinks[drive.id];
+        else if (!previousLink) delete nextLinks[drive.id];
       }
     });
+    if (capReached && scanner)
+      warnings.push(
+        `Content scan reached the per-run cap (${scanner.settings.maxFilesPerRun} files); remaining files will be scanned on the next run.`,
+      );
+    if (labelWarnings.size)
+      warnings.push(
+        `File sensitivity labels could not be read for some files (${[...labelWarnings].join(', ')}); label checks fall back to library/site labels.`,
+      );
 
     // Roll up guest presence on sites into explicit grants so rules treat them uniformly.
     for (const loc of batch.locations) {
@@ -398,7 +543,11 @@ export const microsoftGraphConnector: Connector<GraphConfig> = {
       },
       fullSync,
       deletions,
+      contentScanScope: scanner
+        ? { fullEnumeration: fullSync, seenFileIds, deletedFileIds }
+        : undefined,
       stats: {
+        ...(scanner ? scanStats : {}),
         users: batch.identities.length,
         sites: sites.length,
         locations: batch.locations.length,

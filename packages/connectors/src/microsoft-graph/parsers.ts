@@ -65,7 +65,10 @@ export interface GraphDriveItem {
   lastModifiedDateTime?: string | null;
   parentReference?: { id?: string; driveId?: string; path?: string } | null;
   folder?: { childCount?: number } | null;
-  file?: Record<string, unknown> | null;
+  file?: { mimeType?: string; hashes?: Record<string, string> } | null;
+  size?: number | null;
+  /** Content tag: changes only when file CONTENT changes (used to skip re-scans). */
+  cTag?: string | null;
   shared?: { scope?: string } | null;
   root?: Record<string, unknown> | null;
   deleted?: { state?: string } | null;

@@ -20,3 +20,32 @@ export async function mapLimit<T, R>(
   await Promise.all(workers);
   return results;
 }
+
+/**
+ * A shared concurrency limiter: `limit(fn)` runs fn when fewer than `max`
+ * limited calls are in flight. Used to cap content downloads ACROSS sites.
+ */
+export function createLimiter(max: number): <R>(fn: () => Promise<R>) => Promise<R> {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  const next = () => {
+    if (active >= max) return;
+    const run = queue.shift();
+    if (run) {
+      active++;
+      run();
+    }
+  };
+  return (fn) =>
+    new Promise((resolve, reject) => {
+      queue.push(() => {
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            active--;
+            next();
+          });
+      });
+      next();
+    });
+}

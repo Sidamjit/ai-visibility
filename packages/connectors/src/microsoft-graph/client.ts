@@ -9,7 +9,8 @@
  *  - paging via `@odata.nextLink`,
  *  - delta queries via `@odata.deltaLink` (incremental sync),
  *  - throttling: HTTP 429/503/504 honour `Retry-After`, else exponential backoff,
- *  - one transparent token refresh on 401.
+ *  - one transparent token refresh on 401,
+ *  - in-memory, size-capped binary downloads for content scanning.
  *
  * Docs: https://learn.microsoft.com/graph/throttling ,
  *       https://learn.microsoft.com/graph/paging ,
@@ -117,27 +118,33 @@ export class GraphClient {
   }
 
   /**
-   * GET a Graph resource with retry/throttling handling.
-   * Returns parsed JSON, or raw text when the response is not JSON (e.g. `$count`).
+   * Send a request with retry/throttling handling. Returns the successful
+   * Response (caller reads the body) or throws GraphError.
    */
-  async get<T>(
+  private async request(
+    method: 'GET' | 'POST',
     pathOrUrl: string,
-    init: { version?: 'v1.0' | 'beta'; headers?: Record<string, string> } = {},
-  ): Promise<T> {
+    init: { version?: 'v1.0' | 'beta'; headers?: Record<string, string>; accept?: string } = {},
+  ): Promise<Response> {
     const url = this.resolve(pathOrUrl, init.version);
     let refreshed = false;
 
     for (let attempt = 0; ; attempt++) {
       const token = await this.getToken();
       this.requestCount++;
+      // Redirects (e.g. /content -> pre-authenticated download URL) are followed by fetch;
+      // the Authorization header is dropped on cross-origin redirects per the Fetch spec.
       const res = await this.fetchImpl(url, {
-        headers: { authorization: `Bearer ${token}`, accept: 'application/json', ...init.headers },
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          accept: init.accept ?? 'application/json',
+          ...(method === 'POST' ? { 'content-length': '0' } : {}),
+          ...init.headers,
+        },
       });
 
-      if (res.ok) {
-        const type = res.headers.get('content-type') ?? '';
-        return (type.includes('json') ? await res.json() : await res.text()) as T;
-      }
+      if (res.ok) return res;
 
       if (res.status === 401 && !refreshed) {
         refreshed = true;
@@ -155,12 +162,72 @@ export class GraphClient {
         error?: { code?: string; message?: string };
       };
       throw new GraphError(
-        `Graph GET ${url} failed (${res.status}): ${err.error?.message ?? res.statusText}`,
+        `Graph ${method} ${url} failed (${res.status}): ${err.error?.message ?? res.statusText}`,
         res.status,
         err.error?.code,
         url,
       );
     }
+  }
+
+  private static async body<T>(res: Response): Promise<T> {
+    const type = res.headers.get('content-type') ?? '';
+    return (type.includes('json') ? await res.json() : await res.text()) as T;
+  }
+
+  /**
+   * GET a Graph resource with retry/throttling handling.
+   * Returns parsed JSON, or raw text when the response is not JSON (e.g. `$count`).
+   */
+  async get<T>(
+    pathOrUrl: string,
+    init: { version?: 'v1.0' | 'beta'; headers?: Record<string, string> } = {},
+  ): Promise<T> {
+    return GraphClient.body<T>(await this.request('GET', pathOrUrl, init));
+  }
+
+  /**
+   * POST with an empty body. Used ONLY for read-type actions that Graph models
+   * as POST (e.g. `extractSensitivityLabels`, which needs just Files.Read.All).
+   */
+  async postAction<T>(pathOrUrl: string, init: { version?: 'v1.0' | 'beta' } = {}): Promise<T> {
+    return GraphClient.body<T>(await this.request('POST', pathOrUrl, init));
+  }
+
+  /**
+   * Download binary content (e.g. `/drives/{d}/items/{i}/content`) INTO MEMORY,
+   * aborting if it exceeds `maxBytes`. Nothing is written to disk.
+   */
+  async getBytes(pathOrUrl: string, maxBytes: number): Promise<Uint8Array> {
+    const res = await this.request('GET', pathOrUrl, { accept: '*/*' });
+    const declared = Number(res.headers.get('content-length') ?? NaN);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await res.body?.cancel();
+      throw new GraphError(`Content larger than ${maxBytes} bytes`, 413, 'tooLarge', pathOrUrl);
+    }
+    if (!res.body) return new Uint8Array(await res.arrayBuffer());
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    const reader = res.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        for (const c of chunks) c.fill(0);
+        throw new GraphError(`Content larger than ${maxBytes} bytes`, 413, 'tooLarge', pathOrUrl);
+      }
+      chunks.push(value);
+    }
+    const out = new Uint8Array(total);
+    let offset = 0;
+    for (const c of chunks) {
+      out.set(c, offset);
+      offset += c.byteLength;
+      c.fill(0);
+    }
+    return out;
   }
 
   /** Iterate all items across pages of a collection. */

@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { generateDemoBatch } from '@aiv/connectors';
+import { NZ_PSR_SAMPLE_POLICY, PolicySchema } from '@aiv/policy';
 import { runAnalysis } from './engine';
 import { RULES } from './rules';
 import { AS_OF } from './test-builders';
 
 describe('runAnalysis on the demo organisation', () => {
-  const messy = runAnalysis(generateDemoBatch({ asOf: AS_OF }), { asOf: AS_OF });
+  const policy = PolicySchema.parse(NZ_PSR_SAMPLE_POLICY);
+  const messy = runAnalysis(generateDemoBatch({ asOf: AS_OF }), { asOf: AS_OF, policy });
   const fixed = runAnalysis(generateDemoBatch({ asOf: AS_OF, remediationProgress: 1 }), {
     asOf: AS_OF,
+    policy,
   });
 
   it('exercises every rule', () => {
@@ -32,6 +35,7 @@ describe('runAnalysis on the demo organisation', () => {
   it('uses editable assumptions for money', () => {
     const doubled = runAnalysis(generateDemoBatch({ asOf: AS_OF }), {
       asOf: AS_OF,
+      policy,
       assumptions: { loadedHourlyCost: 110 },
     });
     expect(doubled.metrics.estimatedMonthlyValue).toBeCloseTo(
@@ -41,6 +45,22 @@ describe('runAnalysis on the demo organisation', () => {
   });
 
   it('is deterministic', () => {
-    expect(runAnalysis(generateDemoBatch({ asOf: AS_OF }), { asOf: AS_OF })).toEqual(messy);
+    expect(runAnalysis(generateDemoBatch({ asOf: AS_OF }), { asOf: AS_OF, policy })).toEqual(messy);
+  });
+
+  it('summarises content scanning and classified files (content-free)', () => {
+    expect(messy.content).not.toBeNull();
+    expect(messy.content!.filesScanned).toBeGreaterThan(1000);
+    expect(messy.content!.breachingFiles).toBeGreaterThan(5);
+    expect(messy.contentFiles.length).toBeGreaterThan(10);
+    expect(messy.contentFiles[0]!.levelId).toBe('RESTRICTED');
+    expect(messy.scores.riskComponents).toHaveProperty('policy');
+    expect(fixed.content!.breachingFiles).toBeLessThan(messy.content!.breachingFiles);
+  });
+
+  it('runs without a policy (metadata-only rules)', () => {
+    const r = runAnalysis(generateDemoBatch({ asOf: AS_OF }), { asOf: AS_OF });
+    expect(r.content).toBeNull();
+    expect(r.findings.some((f) => f.category === 'policy')).toBe(false);
   });
 });

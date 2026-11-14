@@ -11,6 +11,8 @@ import {
   type Assumptions,
   type NormalizedBatch,
 } from '@aiv/core';
+import type { Policy } from '@aiv/policy';
+import { toFileViews } from './content';
 import { buildIndex } from './context';
 import { computeDepartmentStats, computeOrgMetrics } from './metrics';
 import { RULES } from './rules';
@@ -26,6 +28,8 @@ import {
 export interface RunAnalysisOptions {
   assumptions?: Partial<Assumptions>;
   asOf?: Date;
+  /** Tenant data-classification policy; enables POL-xxx rules and content metrics. */
+  policy?: Policy | null;
   /** Override the rule set (tests, or tenant-specific rule packs). */
   rules?: readonly RuleDefinition[];
 }
@@ -33,8 +37,9 @@ export interface RunAnalysisOptions {
 export function runAnalysis(data: NormalizedBatch, opts: RunAnalysisOptions = {}): AnalysisResult {
   const assumptions = AssumptionsSchema.parse({ ...DEFAULT_ASSUMPTIONS, ...opts.assumptions });
   const asOf = opts.asOf ?? new Date();
-  const index = buildIndex(data, assumptions, asOf);
-  const ctx: RuleContext = { data, index, assumptions, asOf };
+  const policy = opts.policy ?? null;
+  const index = buildIndex(data, assumptions, asOf, policy);
+  const ctx: RuleContext = { data, index, assumptions, policy, asOf };
 
   const findings: Finding[] = [];
   for (const rule of opts.rules ?? RULES) {
@@ -64,5 +69,7 @@ export function runAnalysis(data: NormalizedBatch, opts: RunAnalysisOptions = {}
     siteScores,
     departments,
     assumptions,
+    content: index.content?.metrics ?? null,
+    contentFiles: index.content ? toFileViews(index.content) : [],
   };
 }
