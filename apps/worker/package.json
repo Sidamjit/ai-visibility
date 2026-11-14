@@ -8,11 +8,13 @@
     "seed": "tsx src/cli.ts seed-demo",
     "sync": "tsx src/cli.ts sync-all",
     "start": "tsx src/cli.ts loop",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "cli": "tsx src/cli.ts"
   },
   "dependencies": {
     "@aiv/connectors": "0.1.0",
     "@aiv/db": "0.1.0",
-    "@aiv/pipeline": "0.1.0"
+    "@aiv/pipeline": "0.1.0",
+    "@aiv/core": "0.1.0"
   }
 }

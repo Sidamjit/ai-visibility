@@ -34,8 +34,9 @@ export async function toggleRemediationStep(formData: FormData): Promise<void> {
 export async function syncConnectorNow(formData: FormData): Promise<void> {
   const user = await requireRole(['IT']);
   const id = String(formData.get('connectorInstanceId'));
-  await runConnectorSync(user.tenantId, id);
-  await runTenantAnalysis(user.tenantId);
+  const out = await runConnectorSync(user.tenantId, id);
+  // The error is stored on the connector instance and shown on the page; only analyse fresh data.
+  if (out.ok) await runTenantAnalysis(user.tenantId);
   revalidatePath('/', 'layout');
 }
 
