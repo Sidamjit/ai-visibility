@@ -395,7 +395,9 @@ describe('LLM endpoint guard (client-controlled endpoints only)', () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     expect(await ol.complete([{ role: 'user', content: 'hi' }])).toBe('{"ok":true}');
-    expect(fetchImpl.mock.calls[1]![0]).toBe('http://ollama:11434/v1/chat/completions');
+    expect((fetchImpl.mock.calls[1] as unknown as [string])[0]).toBe(
+      'http://ollama:11434/v1/chat/completions',
+    );
   });
   it('ignores unknown level ids returned by the model', async () => {
     const llm: LlmClient = {

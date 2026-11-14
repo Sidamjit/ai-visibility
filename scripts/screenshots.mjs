@@ -20,7 +20,7 @@ const browser = await chromium.launch({
   args: ['--no-sandbox'],
 });
 
-async function session(email) {
+async function session(email, password = PASSWORD) {
   const ctx = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 1,
@@ -28,7 +28,7 @@ async function session(email) {
   const page = await ctx.newPage();
   await page.goto(`${BASE}/login`);
   await page.fill('input[name=email]', email);
-  await page.fill('input[name=password]', PASSWORD);
+  await page.fill('input[name=password]', password);
   await Promise.all([
     page.waitForURL((u) => !u.pathname.startsWith('/login')),
     page.click('button[type=submit]'),
@@ -69,6 +69,38 @@ async function shot(page, path, file, { full = true } = {}) {
   await shot(page, '/it/remediation', '04-ict-remediation-checklist.png', { full: false });
   await shot(page, '/connectors', '08-connectors.png');
   await shot(page, '/settings/assumptions', '09-assumptions.png');
+
+  // Content & policy breaches, with the first file's evidence expanded.
+  await page.goto(`${BASE}/it/breaches`, { waitUntil: 'networkidle' });
+  await page.locator('tbody tr.cursor-pointer').first().click();
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: `${OUT}10-content-policy-breaches.png`, fullPage: true });
+  console.log('saved docs/screenshots/10-content-policy-breaches.png');
+  await shot(page, '/settings/policy', '11-classification-policy.png');
+  await shot(page, '/settings/scanning', '12-content-scanning.png');
+
+  // Vendor access: switch on, grant 4 h diagnostics access, sign in as the vendor.
+  await page.goto(`${BASE}/settings/vendor-access`, { waitUntil: 'networkidle' });
+  if (await page.locator('text=Allow time-boxed grants').count()) {
+    await page.click('text=Allow time-boxed grants');
+    await page.waitForLoadState('networkidle');
+  }
+  await page.fill('input[name=email]', 'support@weltrous.example');
+  await page.fill('input[name=name]', 'Weltrous support');
+  await page.fill('input[name=reason]', 'INC-1042 — Graph sync failing since Tuesday');
+  await page.click('text=Grant time-boxed access');
+  await page.locator('code.select-all').waitFor();
+  const otp = (await page.locator('code.select-all').textContent()).trim();
+  const vendor = await session('support@weltrous.example', otp);
+  await shot(vendor.page, '/support', '15-support-diagnostics.png');
+  await vendor.page.goto(`${BASE}/it/breaches`); // blocked by scope → back to /support (audited)
+  await vendor.ctx.close();
+  await shot(page, '/settings/vendor-access', '13-vendor-access.png');
+  await shot(page, '/settings/audit', '14-audit-log.png', { full: false });
+  // Leave the demo in its default state: vendor access off, all grants revoked.
+  await page.goto(`${BASE}/settings/vendor-access`, { waitUntil: 'networkidle' });
+  await page.click('text=Turn off and revoke all');
+  await page.waitForLoadState('networkidle');
   await ctx.close();
 }
 {
