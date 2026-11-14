@@ -1,0 +1,18 @@
+@import 'tailwindcss';
+
+/* Print styles for the exportable report. */
+@media print {
+  @page {
+    size: A4;
+    margin: 14mm;
+  }
+  body {
+    background: white !important;
+  }
+  .break-before {
+    break-before: page;
+  }
+  section {
+    break-inside: avoid;
+  }
+}
