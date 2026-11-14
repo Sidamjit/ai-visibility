@@ -1,0 +1,20 @@
+{
+  "name": "@aiv/policy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Client-editable data classification & information-management policy: schema, YAML/JSON import, content classification and exposure evaluation.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aiv/core": "0.1.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@aiv/content-scan",
+  "version": "0.1.0",
+  "private": true,
+  "description": "In-memory content scanning: text extraction, validated sensitive-data classifiers, redaction, and optional client-hosted LLM classification.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aiv/core": "0.1.0",
+    "@aiv/policy": "0.1.0",
+    "@kenjiuno/msgreader": "^1.29.0",
+    "fflate": "^0.8.3",
+    "postal-mime": "^2.4.1",
+    "unpdf": "^2.1.0",
+    "zod": "^4.6.7"
+  }
+}

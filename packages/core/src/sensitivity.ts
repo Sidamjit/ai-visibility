@@ -1,7 +1,9 @@
 /**
- * Metadata-only sensitivity heuristics.
+ * Metadata-only sensitivity heuristics (name keywords).
  *
- * We NEVER read file contents. Instead, names of sites/folders/files are matched
+ * This is the cheap first signal, available for every item. Content-based
+ * classification (`@aiv/content-scan`) is the authoritative signal for files that
+ * were scanned. Here, names of sites/folders/files are matched
  * against keyword patterns that commonly indicate personal, financial, HR, legal
  * or health information. This is a triage signal, not a classifier: findings
  * that rely on it say so in their evidence, and the fix is always "label it

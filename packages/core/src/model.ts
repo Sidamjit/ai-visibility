@@ -7,12 +7,15 @@
  * changing a rule or a dashboard.
  *
  * Design rules (see docs/ARCHITECTURE.md):
- *  1. Metadata only. Never add a field that carries file/message CONTENT.
+ *  1. No CONTENT. Never add a field that carries file/message content. Content
+ *     scanning produces `ContentScan` results (classifier counts, hashes,
+ *     optional redacted snippets) — see content.ts.
  *  2. `externalId` is the stable ID in the source system; `connectorId` says which source.
  *  3. Dates are ISO-8601 strings at this layer (JSON-friendly); the DB layer converts.
  *  4. Use zod schemas so connector output is validated at the boundary.
  */
 import { z } from 'zod';
+import { ContentScanSchema } from './content';
 
 const isoDate = z.iso.datetime({ offset: true });
 
@@ -93,7 +96,7 @@ export const ContentLocationSchema = z.object({
   externalId: z.string(),
   parentExternalId: z.string().nullable(),
   kind: z.enum(LOCATION_KINDS),
-  /** Display name only. File names may hint at sensitivity; contents are never read. */
+  /** Display name. Content findings live in ContentScan, keyed by this location's externalId. */
   name: z.string(),
   webUrl: z.string().nullable(),
   /** Root site this location belongs to (itself for a site). Used for per-site rollups. */
@@ -110,7 +113,8 @@ export const ContentLocationSchema = z.object({
   hasUniquePermissions: z.boolean(),
   /**
    * Heuristic: metadata suggests sensitive content (name keywords such as
-   * "payroll", "passport", label, or DLP signal). Content is NOT inspected.
+   * "payroll", "passport", label, or DLP signal). Content-based evidence is
+   * carried separately in ContentScan.
    */
   likelySensitive: z.boolean(),
   sensitivityReasons: z.array(z.string()),
@@ -180,6 +184,8 @@ export const NormalizedBatchSchema = z.object({
   grants: z.array(SharingGrantSchema).default([]),
   labels: z.array(SensitivityLabelSchema).default([]),
   costs: z.array(CostItemSchema).default([]),
+  /** Content-scan results for files (classifier counts only, never content). */
+  contentScans: z.array(ContentScanSchema).default([]),
 });
 export type NormalizedBatch = z.infer<typeof NormalizedBatchSchema>;
 
@@ -195,6 +201,7 @@ export function emptyBatch(): NormalizedBatch {
     grants: [],
     labels: [],
     costs: [],
+    contentScans: [],
   };
 }
 
