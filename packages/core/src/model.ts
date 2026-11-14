@@ -14,7 +14,7 @@
  */
 import { z } from 'zod';
 
-const isoDate = z.string().datetime({ offset: true });
+const isoDate = z.iso.datetime({ offset: true });
 
 /** An organisational unit (Entra `department` attribute, HR system, etc.). */
 export const DepartmentSchema = z.object({
