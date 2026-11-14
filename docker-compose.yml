@@ -1,0 +1,56 @@
+# Local / pilot deployment: Postgres + web + worker.
+#
+#   cp .env.example .env   # set NEXTAUTH_SECRET at minimum
+#   docker compose up --build
+#   open http://localhost:3000   (demo users: it@ / exec@ / manager@demo.local, password demo1234)
+#
+# Set SEED_DEMO=false for a real client deployment (then use the worker CLI to create the tenant).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aiv
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aiv}
+      POSTGRES_DB: aiv
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U aiv -d aiv']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: create/update the schema, optionally seed the demo tenant.
+  setup:
+    build: { context: ., target: worker }
+    env_file: { path: .env, required: false }
+    environment:
+      DATABASE_URL: postgresql://aiv:${POSTGRES_PASSWORD:-aiv}@postgres:5432/aiv
+    command: sh -c 'npm run db:push && if [ "${SEED_DEMO:-true}" = "true" ]; then npm run db:seed; fi'
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: 'no'
+
+  web:
+    build: { context: ., target: web }
+    env_file: { path: .env, required: false }
+    environment:
+      DATABASE_URL: postgresql://aiv:${POSTGRES_PASSWORD:-aiv}@postgres:5432/aiv
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env (openssl rand -base64 32)}
+      SHOW_DEMO_LOGINS: ${SEED_DEMO:-true}
+    ports:
+      - '3000:3000'
+    depends_on:
+      setup: { condition: service_completed_successfully }
+
+  worker:
+    build: { context: ., target: worker }
+    env_file: { path: .env, required: false }
+    environment:
+      DATABASE_URL: postgresql://aiv:${POSTGRES_PASSWORD:-aiv}@postgres:5432/aiv
+    depends_on:
+      setup: { condition: service_completed_successfully }
+
+volumes:
+  pgdata:
