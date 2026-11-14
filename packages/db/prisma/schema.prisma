@@ -1,0 +1,341 @@
+// Prisma schema — single source of truth for the database.
+//
+// PORTABILITY RULES (so the same schema runs on Postgres and SQLite):
+//   - no `enum` (use String + zod validation in code; allowed values documented inline)
+//   - no scalar lists (String[]) — use Json
+//   - no native type attributes (@db.*)
+// The provider below is rewritten by scripts/prisma.mjs based on DATABASE_URL.
+//
+// MULTI-TENANCY: every business table carries `tenantId`. All queries MUST
+// filter by tenantId (see apps/web/lib/data.ts for the pattern).
+//
+// DATA MINIMISATION: only metadata. No file contents, prompts or messages.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A customer organisation.
+model Tenant {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  /// Editable value/cost assumptions (see @aiv/core assumptions.ts). Null = defaults.
+  assumptions Json?
+  createdAt   DateTime @default(now())
+
+  users      AppUser[]
+  connectors ConnectorInstance[]
+  runs       AnalysisRun[]
+}
+
+/// A person who signs in to THIS app (not a person in the analysed tenant).
+model AppUser {
+  id           String   @id @default(cuid())
+  tenantId     String
+  email        String   @unique
+  name         String
+  /// bcrypt hash; null for SSO-only users.
+  passwordHash String?
+  /// 'IT' | 'EXECUTIVE' | 'MANAGER'
+  role         String
+  /// For MANAGER: department they manage (filters the manager dashboard).
+  department   String?
+  createdAt    DateTime @default(now())
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+/// A configured connector for a tenant. Secrets are NEVER stored here (env only).
+model ConnectorInstance {
+  id           String    @id @default(cuid())
+  tenantId     String
+  /// Connector id from @aiv/connectors registry, e.g. 'microsoft-graph', 'demo'.
+  connectorId  String
+  displayName  String
+  /// Non-secret config validated by the connector's zod schema.
+  config       Json
+  /// Opaque incremental-sync cursor owned by the connector.
+  cursor       Json?
+  /// 'idle' | 'running' | 'ok' | 'error'
+  status       String    @default("idle")
+  lastSyncAt   DateTime?
+  lastError    String?
+  lastStats    Json?
+  lastWarnings Json?
+  createdAt    DateTime  @default(now())
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  syncRuns     SyncRun[]
+
+  @@index([tenantId])
+}
+
+model SyncRun {
+  id                  String            @id @default(cuid())
+  tenantId            String
+  connectorInstanceId String
+  startedAt           DateTime          @default(now())
+  finishedAt          DateTime?
+  /// 'running' | 'ok' | 'error'
+  status              String
+  fullSync            Boolean           @default(false)
+  stats               Json?
+  warnings            Json?
+  error               String?
+  connector           ConnectorInstance @relation(fields: [connectorInstanceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, startedAt])
+}
+
+// ---------- Normalized entities (mirror @aiv/core model.ts) ----------
+
+model Department {
+  id                  String @id @default(cuid())
+  tenantId            String
+  connectorInstanceId String
+  externalId          String
+  name                String
+
+  @@unique([tenantId, connectorInstanceId, externalId])
+}
+
+model Identity {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  connectorInstanceId String
+  externalId          String
+  displayName         String
+  email               String?
+  departmentName      String?
+  jobTitle            String?
+  isGuest             Boolean
+  accountEnabled      Boolean
+  lastSignInAt        DateTime?
+
+  @@unique([tenantId, connectorInstanceId, externalId])
+  @@index([tenantId, departmentName])
+}
+
+model AIAsset {
+  id                  String  @id @default(cuid())
+  tenantId            String
+  connectorInstanceId String
+  externalId          String
+  name                String
+  vendor              String
+  /// 'copilot' | 'chat-assistant' | 'agent' | 'custom-model' | 'lms-ai' | 'other'
+  kind                String
+  groundedOnOrgData   Boolean
+
+  @@unique([tenantId, connectorInstanceId, externalId])
+}
+
+model Licence {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  connectorInstanceId String
+  identityExternalId  String
+  assetExternalId     String
+  skuId               String
+  skuName             String
+  assignedAt          DateTime?
+
+  @@index([tenantId, identityExternalId])
+}
+
+model UsageSummary {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  connectorInstanceId String
+  identityExternalId  String
+  assetExternalId     String
+  periodStart         DateTime
+  periodEnd           DateTime
+  lastActivityAt      DateTime?
+  activeDays          Int?
+  /// { [feature]: ISO date | null }
+  featureLastActivity Json
+
+  @@index([tenantId, identityExternalId])
+}
+
+model ContentLocation {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  connectorInstanceId String
+  externalId          String
+  parentExternalId    String?
+  /// 'site' | 'library' | 'folder' | 'file' | 'onedrive' | 'team'
+  kind                String
+  name                String
+  webUrl              String?
+  siteExternalId      String?
+  ownerDepartment     String?
+  /// 'public' | 'private' | 'unknown'
+  visibility          String
+  memberCount         Int?
+  guestMemberCount    Int?
+  itemCount           Int?
+  lastModifiedAt      DateTime?
+  sensitivityLabelId  String?
+  hasUniquePermissions Boolean
+  likelySensitive     Boolean
+  /// string[]
+  sensitivityReasons  Json
+
+  @@unique([tenantId, connectorInstanceId, externalId])
+  @@index([tenantId, siteExternalId])
+}
+
+model SharingGrant {
+  id                     String    @id @default(cuid())
+  tenantId               String
+  connectorInstanceId    String
+  externalId             String
+  locationExternalId     String
+  /// 'anyone' | 'organization' | 'specific-people' | 'direct' | 'external-guest'
+  scope                  String
+  /// string[]
+  roles                  Json
+  /// string[]
+  grantedToExternalIds   Json
+  externalPrincipalCount Int
+  createdAt              DateTime?
+  expiresAt              DateTime?
+  inherited              Boolean
+
+  @@unique([tenantId, connectorInstanceId, externalId])
+  @@index([tenantId, locationExternalId])
+}
+
+model SensitivityLabel {
+  id                  String  @id @default(cuid())
+  tenantId            String
+  connectorInstanceId String
+  externalId          String
+  name                String
+  priority            Int
+  isSensitive         Boolean
+
+  @@unique([tenantId, connectorInstanceId, externalId])
+}
+
+model CostItem {
+  id                  String @id @default(cuid())
+  tenantId            String
+  connectorInstanceId String
+  externalId          String
+  assetExternalId     String
+  /// 'licence' | 'consumption' | 'platform' | 'services'
+  category            String
+  description         String
+  monthlyAmount       Float
+  currency            String
+
+  @@unique([tenantId, connectorInstanceId, externalId])
+}
+
+// ---------- Analysis output ----------
+
+/// One execution of the analysis engine. Dashboards read the latest run; trends read all.
+model AnalysisRun {
+  id          String           @id @default(cuid())
+  tenantId    String
+  createdAt   DateTime         @default(now())
+  asOf        DateTime
+  riskScore   Int
+  valueScore  Int
+  scores      Json
+  metrics     Json
+  siteScores  Json
+  departments Json
+  assumptions Json
+  /// True for back-filled demo history (trend charts); never for real tenants.
+  simulated   Boolean          @default(false)
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  findings    Finding[]
+  recommendations Recommendation[]
+  valueMetrics ValueMetric[]
+
+  @@index([tenantId, createdAt])
+}
+
+model Finding {
+  id             String          @id @default(cuid())
+  runId          String
+  tenantId       String
+  /// Stable across runs: `${ruleId}:${key}`.
+  findingKey     String
+  ruleId         String
+  ruleName       String
+  /// 'risk' | 'opportunity'
+  kind           String
+  category       String
+  /// 'critical' | 'high' | 'medium' | 'low' | 'info'
+  severity       String
+  title          String
+  summary        String
+  evidence       Json
+  siteExternalId String?
+  departmentName String?
+  affectedCount  Int
+  monthlyImpact  Float?
+  run            AnalysisRun     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  recommendation Recommendation?
+
+  @@index([tenantId, runId])
+  @@index([tenantId, findingKey])
+}
+
+model Recommendation {
+  id        String      @id @default(cuid())
+  runId     String
+  tenantId  String
+  findingId String      @unique
+  title     String
+  /// string[]
+  steps     Json
+  /// Role[]
+  audience  Json
+  effort    String
+  impact    String
+  run       AnalysisRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  finding   Finding     @relation(fields: [findingId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, runId])
+}
+
+/// Headline value metrics with the assumptions that produced them (for audit/report).
+model ValueMetric {
+  id             String      @id @default(cuid())
+  runId          String
+  tenantId       String
+  key            String
+  label          String
+  value          Float
+  unit           String
+  /// keys of Assumptions used
+  assumptionKeys Json
+  run            AnalysisRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, runId])
+}
+
+/// Remediation checklist progress. Keyed by findingKey so ticks survive re-analysis.
+model RemediationTask {
+  id         String    @id @default(cuid())
+  tenantId   String
+  findingKey String
+  stepIndex  Int
+  done       Boolean   @default(false)
+  doneBy     String?
+  doneAt     DateTime?
+
+  @@unique([tenantId, findingKey, stepIndex])
+}

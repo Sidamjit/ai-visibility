@@ -1,0 +1,18 @@
+{
+  "name": "@aiv/worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Background worker / CLI: seeds the demo, runs connector syncs and analysis on a schedule.",
+  "type": "module",
+  "scripts": {
+    "seed": "tsx src/cli.ts seed-demo",
+    "sync": "tsx src/cli.ts sync-all",
+    "start": "tsx src/cli.ts loop",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aiv/connectors": "0.1.0",
+    "@aiv/db": "0.1.0",
+    "@aiv/pipeline": "0.1.0"
+  }
+}
