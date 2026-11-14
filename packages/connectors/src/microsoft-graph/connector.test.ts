@@ -107,6 +107,20 @@ describe('microsoftGraphConnector.sync', () => {
     expect(res.warnings.join(' ')).toMatch(/Sign-in activity/);
   });
 
+  it('falls back to the legacy Copilot report path when the new one is unavailable', async () => {
+    const { impl, calls } = mockFetch([
+      ['/copilot/reports/', { status: 404, body: { error: { code: 'NotFound', message: 'no' } } }],
+      ...routes([['/drives/drv1/root/delta', { body: { value: [], '@odata.deltaLink': 'x' } }]]),
+    ]);
+    const res = await microsoftGraphConnector.sync(ctx(impl), null);
+    expect(res.batch.usage).toHaveLength(2);
+    expect(
+      calls.some((c) =>
+        c.url.includes("/beta/reports/getMicrosoft365CopilotUsageUserDetail(period='D30')"),
+      ),
+    ).toBe(true);
+  });
+
   it('fails clearly when secrets are missing', async () => {
     const { impl } = mockFetch([]);
     await expect(microsoftGraphConnector.sync({ ...ctx(impl), secrets: {} }, null)).rejects.toThrow(

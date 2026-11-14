@@ -35,12 +35,13 @@ describe('Graph parsers', () => {
       ['ana@contoso.com', 'u1'],
       ['ben@contoso.com', 'u2'],
     ]);
-    const ana = parseCopilotUsageRow(fx.copilotUsage[0]!, map);
+    const ana = parseCopilotUsageRow(fx.copilotUsage[0]!, map, 28);
     expect(ana?.identityExternalId).toBe('u1');
     expect(ana?.featureLastActivity.teams).toBe('2026-11-11T00:00:00.000Z');
     expect(ana?.featureLastActivity.excel).toBeNull(); // empty string -> null
     expect(Object.values(ana!.featureLastActivity).filter(Boolean)).toHaveLength(4);
     expect(parseCopilotUsageRow(fx.copilotUsage[1]!, map)?.lastActivityAt).toBeNull();
+    expect(ana?.activeDays).toBe(9); // report v2 active usage days for the requested period
     expect(parseCopilotUsageRow(fx.copilotUsage[2]!, map)).toBeNull();
   });
 

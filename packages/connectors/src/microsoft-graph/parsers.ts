@@ -111,7 +111,16 @@ export interface GraphCopilotUsageRow {
   oneNoteCopilotLastActivityDate?: string | null;
   loopCopilotLastActivityDate?: string | null;
   copilotChatLastActivityDate?: string | null;
-  copilotActivityUserDetailsByPeriod?: Array<{ reportPeriod?: number }>;
+  /**
+   * Per-period details. Report v2 adds active usage days and prompt counts;
+   * field names are read defensively because the beta schema is still evolving.
+   */
+  copilotActivityUserDetailsByPeriod?: Array<{
+    reportPeriod?: number;
+    activeUsageDays?: number;
+    [k: string]: unknown;
+  }>;
+  activeUsageDays?: number;
 }
 
 export interface GraphSensitivityLabel {
@@ -223,9 +232,20 @@ export function parseCopilotUsageRow(
     periodStart: start,
     periodEnd: end,
     lastActivityAt: toIsoDate(row.lastActivityDate),
-    activeDays: null, // The user-detail report gives last-activity dates, not day counts.
+    // Report v2 provides active usage days; v1 only gives last-activity dates (null -> inferred later).
+    activeDays: activeUsageDays(row, periodDays),
     featureLastActivity,
   };
+}
+
+function activeUsageDays(row: GraphCopilotUsageRow, periodDays: number): number | null {
+  const byPeriod = row.copilotActivityUserDetailsByPeriod?.find(
+    (p) => p.reportPeriod === periodDays,
+  );
+  const value = byPeriod?.activeUsageDays ?? row.activeUsageDays;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : null;
 }
 
 export function parseSite(

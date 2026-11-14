@@ -59,6 +59,7 @@ export const copilotUsage = [
     oneNoteCopilotLastActivityDate: null,
     loopCopilotLastActivityDate: null,
     copilotChatLastActivityDate: '2026-11-11',
+    copilotActivityUserDetailsByPeriod: [{ reportPeriod: 28, activeUsageDays: 9 }],
   },
   {
     reportRefreshDate: '2026-11-12',

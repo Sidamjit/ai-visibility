@@ -48,7 +48,7 @@ export const GRAPH_PERMISSIONS: readonly PermissionRequirement[] = [
     reason:
       'Read Microsoft 365 Copilot usage reports to measure adoption, feature breadth and inactive seats.',
     dataAccessed:
-      "Per-user last-activity dates per Copilot app (GET /reports/getMicrosoft365CopilotUsageUserDetail(period='D30'), getMicrosoft365CopilotUserCountSummary).",
+      "Per-user last-activity dates per Copilot app and active days (GET /copilot/reports/getMicrosoft365CopilotUsageUserDetail(period='D28'), getMicrosoft365CopilotUserCountSummary). Only licensed Copilot users are reported.",
     required: true,
   },
   {

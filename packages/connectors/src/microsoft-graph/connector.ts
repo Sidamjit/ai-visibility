@@ -62,8 +62,8 @@ export const graphConfigSchema = z.object({
   concurrency: z.number().int().min(1).max(16).default(4),
   /** Labels with Purview sensitivity >= this are treated as sensitive. */
   sensitiveLabelFromPriority: z.number().int().default(2),
-  /** Copilot report period. */
-  copilotReportPeriod: z.enum(['D7', 'D30', 'D90', 'D180']).default('D30'),
+  /** Copilot report period (report v2 periods; D28 ≈ one month). */
+  copilotReportPeriod: z.enum(['D7', 'D28', 'D90', 'D180']).default('D28'),
 });
 export type GraphConfig = z.infer<typeof graphConfigSchema>;
 
@@ -215,23 +215,38 @@ export const microsoftGraphConnector: Connector<GraphConfig> = {
       groundedOnOrgData: true,
     });
 
-    // 3. Copilot usage report. Beta endpoint; JSON format requested explicitly.
+    // 3. Copilot usage report. The beta endpoint returns JSON (v1.0 returns CSV).
+    //    Current path: /copilot/reports/... (report v2). Older tenants/docs use
+    //    /reports/...(period='D30'); fall back to it if the new path is unavailable.
     const upnToId = new Map(
       rawUsers
         .filter((u) => u.userPrincipalName)
         .map((u) => [u.userPrincipalName!.toLowerCase(), u.id]),
     );
     const periodDays = Number(config.copilotReportPeriod.slice(1));
-    const usageRows = await optional(
-      warnings,
+    const reportWarnings: string[] = [];
+    let usageRows = await optional(
+      reportWarnings,
       'Copilot usage report (Reports.Read.All)',
       () =>
         client.list<GraphCopilotUsageRow>(
-          `/reports/getMicrosoft365CopilotUsageUserDetail(period='${config.copilotReportPeriod}')?$format=application/json`,
+          `/copilot/reports/getMicrosoft365CopilotUsageUserDetail(period='${config.copilotReportPeriod}')`,
           { version: 'beta' },
         ),
-      [],
+      null as GraphCopilotUsageRow[] | null,
     );
+    if (usageRows === null) {
+      usageRows = await optional(
+        warnings,
+        'Copilot usage report (Reports.Read.All)',
+        () =>
+          client.list<GraphCopilotUsageRow>(
+            "/reports/getMicrosoft365CopilotUsageUserDetail(period='D30')?$format=application/json",
+            { version: 'beta' },
+          ),
+        [],
+      );
+    }
     let unmatched = 0;
     for (const row of usageRows) {
       const parsed = parseCopilotUsageRow(row, upnToId, periodDays);
