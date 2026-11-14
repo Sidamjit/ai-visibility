@@ -1,0 +1,7 @@
+node_modules
+.next
+coverage
+package-lock.json
+docs/screenshots
+*.db
+packages/db/prisma/generated.prisma
